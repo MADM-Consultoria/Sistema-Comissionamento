@@ -1,0 +1,910 @@
+// src/pages/Configuration.tsx
+import React, { useState, useEffect, useMemo } from "react";
+import { useLocation } from "wouter";
+import DashboardLayout from "@/components/DashboardLayout";
+import {
+  Search, Filter, Users, Award, FileText, CheckCircle, XCircle,
+  Edit2, Save, X, ChevronDown, ChevronUp, Settings, Briefcase, User, Archive,
+  CalendarPlus, Calendar, RefreshCw, AlertTriangle,
+} from "lucide-react";
+import { useAppStore, formatCurrency } from "@/lib/dataStore";
+import { fetchCollaborators, fetchEquipes, API_BASE } from "@/lib/api";
+import { recalculateHierarchyWeights } from "@/lib/metrics";
+import { useAccessControl } from "@/hooks/useAccessControl";
+import { toast } from "sonner";
+import { cn } from "@/lib/utils";
+
+const EXCLUDED_TEAMS = [
+  'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
+  'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
+  'Equipe Murilo Balsalobre', 'Comercial', 'Backoffice', 'CEO', 'Prontuário','BackOffice',
+  'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo'
+];
+
+
+const isExcludedTeam = (teamName: string) => EXCLUDED_TEAMS.includes(teamName);
+type CicloPeriodo = 'diario' | 'semanal' | 'mensal';
+
+function formatMonthYear(dateStr: string): string {
+  if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '--';
+  const [year, month] = dateStr.split('-');
+  const months = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
+                  'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
+  const idx = parseInt(month, 10) - 1;
+  if (idx < 0 || idx > 11) return '--';
+  return `${months[idx]} ${year}`;
+}
+
+export default function Configuration() {
+  const [, navigate] = useLocation();
+  const {
+    currentStartDate, currentEndDate, collaborators, globalConfig,
+    updateGlobalConfig, setCollaborators, equipeConfigs, setEquipeConfigs,
+    loadMetricsForPeriod,
+  } = useAppStore();
+
+  const { hasPermission, getAccessLevel, LEVELS, currentUser } = useAccessControl();
+  const userLevel = getAccessLevel();
+
+  useEffect(() => {
+    if (!hasPermission("canAccessConfiguration")) {
+      navigate("/");
+    }
+  }, [hasPermission, navigate]);
+
+  const canEditConfiguration = hasPermission("canEditConfiguration");
+  const canEditBonus = hasPermission("canEditBonus");
+  const canGenerateNextMonth = hasPermission("canGenerateNextMonth");
+  const isAdminOnly = userLevel === LEVELS.ADMINISTRATIVO;
+
+  // ========== ESTADOS ==========
+  const [searchTerm, setSearchTerm] = useState("");
+  const [selectedEquipe, setSelectedEquipe] = useState("Todas");
+  const [selectedPeriod, setSelectedPeriod] = useState<CicloPeriodo>('mensal');
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<{ assinados?: number; ganhos?: number }>({});
+  const [editingBonusId, setEditingBonusId] = useState<number | null>(null);
+  const [editBonusValue, setEditBonusValue] = useState<number>(0);
+  const [expandedId, setExpandedId] = useState<number | null>(null);
+  const [savingId, setSavingId] = useState<number | null>(null);
+  const [recalculating, setRecalculating] = useState(false);
+
+  const [teamSelected, setTeamSelected] = useState<string>("");
+  const [teamPeriod, setTeamPeriod] = useState<CicloPeriodo>('mensal');
+  const [teamAssinados, setTeamAssinados] = useState<number>(60);
+  const [teamGanhos, setTeamGanhos] = useState<number>(60);
+  const [teamBonus, setTeamBonus] = useState<number>(150);
+
+  // ---------- CONTROLE DE MÊS ----------
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const interval = setInterval(() => setNow(new Date()), 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  const currentMonthPrefix = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`;
+  const [selectedMonth, setSelectedMonth] = useState<string>(`${currentMonthPrefix}-01`);
+  const [availableMonths, setAvailableMonths] = useState<string[]>([]);
+  const [loadingMonths, setLoadingMonths] = useState(false);
+  const [monthsError, setMonthsError] = useState(false);
+
+  const selectedMonthPrefix = selectedMonth.substring(0, 7);
+  const isCurrentMonth = selectedMonthPrefix === currentMonthPrefix;
+  const isPastMonth = selectedMonthPrefix < currentMonthPrefix;
+  const isLocked = isPastMonth || (isCurrentMonth && now.getDate() >= 25);
+
+  const nextMonthDate = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  const nextMonthStr = nextMonthDate.toISOString().slice(0, 10);
+  const isNextMonthGenerated = availableMonths.includes(nextMonthStr);
+
+  const isEditable = canEditConfiguration && !isLocked;
+  const isBonusEditable = canEditBonus && !isLocked;
+  const isAllDisabled = !canEditConfiguration || isLocked;
+
+  // ========== API MESES ==========
+  const refreshMonths = async () => {
+    setLoadingMonths(true);
+    setMonthsError(false);
+    try {
+      const res = await fetch(`${API_BASE}/admin/months`, { credentials: 'include' });
+      if (!res.ok) throw new Error(`Erro ${res.status}`);
+      const data = await res.json();
+      if (data.success) {
+        const months = data.data;
+        if (months.length > 0) {
+          setAvailableMonths(months);
+          if (!months.includes(selectedMonth)) {
+            const currentMonthFull = months.find((m: string) => m.startsWith(currentMonthPrefix));
+            if (currentMonthFull) setSelectedMonth(currentMonthFull);
+            else setSelectedMonth(months[0]);
+          }
+        } else {
+          setAvailableMonths([]);
+          toast.warning('Nenhum mês encontrado no banco.');
+        }
+      }
+    } catch (err: any) {
+      console.error('Erro ao carregar meses:', err);
+      setMonthsError(true);
+      toast.error(`Falha ao carregar meses: ${err.message}`);
+    } finally {
+      setLoadingMonths(false);
+    }
+  };
+
+  useEffect(() => { refreshMonths(); }, []);
+  useEffect(() => { if (!monthsError) refreshMonths(); }, [selectedMonth]);
+
+  // ========== CARREGAMENTO DE COLABORADORES ==========
+  const loadCollaboratorsForMonth = async (month: string) => {
+    if (!month || !/^\d{4}-\d{2}-\d{2}$/.test(month)) return;
+    const mesParam = `?mes=${month.substring(0, 7)}`;
+    try {
+      const collabs = await fetchCollaborators(mesParam);
+      const uniqueMap = new Map();
+      collabs.forEach((c: any) => {
+        const key = c.id || c.internal_id || c.email;
+        if (!uniqueMap.has(key)) uniqueMap.set(key, c);
+      });
+      const uniqueCollabs = Array.from(uniqueMap.values());
+      setCollaborators(uniqueCollabs);
+      if (uniqueCollabs.length === 0) toast.warning('Nenhum colaborador encontrado para este mês.');
+    } catch (err: any) {
+      toast.error(`Erro: ${err.message}`);
+    }
+  };
+
+  useEffect(() => {
+    if (selectedMonth) loadCollaboratorsForMonth(selectedMonth);
+  }, [selectedMonth]);
+
+  // Equipes
+  useEffect(() => {
+    const loadBaseData = async () => {
+      try {
+        const equipes = await fetchEquipes();
+        setEquipeConfigs(equipes.map((eq: any) => ({
+          id: eq.id ? eq.id.toString() : `equipe_${Math.random()}`,
+          nome: eq.nome || 'Equipe sem nome',
+          pesoAssinados: 3, pesoGanhos: 3,
+          pesoequipeAssinados: 0, pesoequipeGanhos: 0, bonus: 150,
+        })));
+      } catch (error: any) {
+        if (error.message?.includes('401')) window.location.href = '/login';
+        else toast.error(`Falha ao carregar dados base: ${error.message}`);
+      }
+    };
+    loadBaseData();
+  }, [setEquipeConfigs]);
+
+  useEffect(() => {
+    loadMetricsForPeriod({ equipeNome: undefined, colaboradorNome: undefined, produto: undefined });
+  }, [currentStartDate, currentEndDate, loadMetricsForPeriod]);
+
+  // ========== LISTAS ==========
+  const filteredEquipeConfigs = useMemo(() => equipeConfigs.filter(e => !isExcludedTeam(e.nome)), [equipeConfigs]);
+  const equipeNomes = useMemo(() => ["Todas", ...filteredEquipeConfigs.map(e => e.nome)], [filteredEquipeConfigs]);
+  useEffect(() => { if (filteredEquipeConfigs.length && !teamSelected) setTeamSelected(filteredEquipeConfigs[0].nome); }, [filteredEquipeConfigs, teamSelected]);
+
+  const filteredCollaborators = useMemo(() => {
+    return collaborators.filter(c => {
+      if (isExcludedTeam(c.equipeNome)) return false;
+      if (selectedEquipe !== "Todas" && c.equipeNome !== selectedEquipe) return false;
+      if (searchTerm) {
+        const term = searchTerm.toLowerCase();
+        return c.name.toLowerCase().includes(term) || c.email.toLowerCase().includes(term);
+      }
+      return true;
+    });
+  }, [collaborators, searchTerm, selectedEquipe]);
+
+  const totalStats = {
+    totalColaboradores: filteredCollaborators.length,
+    ativos: filteredCollaborators.filter(c => c.status === "ativo").length,
+  };
+
+  // ========== FUNÇÕES AUXILIARES ==========
+  const getCycleMetaForPeriod = (collab: any, periodo: CicloPeriodo) => {
+    switch (periodo) {
+      case 'diario': return { assinados: Number(collab.metaDiarioAssinados) ?? 3, ganhos: Number(collab.metaDiarioGanhos) ?? 3 };
+      case 'semanal': return { assinados: Number(collab.metaSemanalAssinados) ?? 15, ganhos: Number(collab.metaSemanalGanhos) ?? 15 };
+      default: return { assinados: Number(collab.metaMensalAssinados) ?? 60, ganhos: Number(collab.metaMensalGanhos) ?? 60 };
+    }
+  };
+  const getCiclosCompletos = (collab: any, periodo: CicloPeriodo) => {
+    const meta = getCycleMetaForPeriod(collab, periodo);
+    const assinados = Number(collab.assinados) || 0;
+    const ganhos = Number(collab.ganhos) || 0;
+    if (meta.assinados === 0 || meta.ganhos === 0) return 0;
+    return Math.floor(Math.min(assinados / meta.assinados, ganhos / meta.ganhos));
+  };
+  const getBonusPorCiclo = (collab: any) => {
+    if (collab.bonusComissao !== undefined && collab.bonusComissao !== null && Number(collab.bonusComissao) > 0) {
+      return Number(collab.bonusComissao);
+    }
+    const equipeConfig = filteredEquipeConfigs.find(e => e.nome === collab.equipeNome);
+    return equipeConfig?.bonus || Number(globalConfig.valorBonus);
+  };
+  const toggleExpand = (id: number) => setExpandedId(prev => (prev === id ? null : id));
+
+  const isIndividualEditable = (collab: any) => {
+    if (isAdminOnly) return isEditable;
+    return isEditable && collab.grupo !== 'Supervisor' && collab.grupo !== 'Coordenador' && collab.grupo !== 'Administrativo';
+  };
+
+  const getCollaboratorEmail = (collab: any): string => {
+    const email = collab.email || collab.e_mail || collab.colaborador || collab.name || '';
+    return email.trim().toLowerCase();
+  };
+
+  const getCsrfHeaders = async (): Promise<HeadersInit> => {
+    let token = localStorage.getItem('csrfToken');
+    if (!token || token === 'null' || token === 'undefined') {
+      try {
+        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.csrfToken && data.csrfToken !== 'disabled') {
+          token = data.csrfToken;
+          if (token) localStorage.setItem('csrfToken', token);
+        } else {
+          token = null;
+        }
+      } catch (err) {
+        console.error('Não foi possível obter token CSRF:', err);
+        token = null;
+      }
+    }
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (token && typeof token === 'string') {
+      headers['x-csrf-token'] = token;
+    }
+    return headers;
+  };
+
+  // ========== SALVAMENTOS ==========
+  const saveGlobalConfig = async () => {
+    if (!isEditable) return;
+    try {
+      let pesoAssinados = 60, pesoGanhos = 60;
+      if (selectedPeriod === 'diario') {
+        pesoAssinados = Number(globalConfig.pesoDiarioAssinados);
+        pesoGanhos = Number(globalConfig.pesoDiarioGanhos);
+      } else if (selectedPeriod === 'semanal') {
+        pesoAssinados = Number(globalConfig.pesoSemanalAssinados);
+        pesoGanhos = Number(globalConfig.pesoSemanalGanhos);
+      } else {
+        pesoAssinados = Number(globalConfig.pesoMensalAssinados);
+        pesoGanhos = Number(globalConfig.pesoMensalGanhos);
+      }
+      const body = {
+        periodo: selectedPeriod,
+        peso_assinados: pesoAssinados,
+        peso_ganhos: pesoGanhos,
+        bonus: Number(globalConfig.valorBonus),
+        data_metrica: selectedMonth,
+      };
+      const headers = await getCsrfHeaders();
+      const res = await fetch(`${API_BASE}/admin/update-all-assessors-metrics`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(body),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Metas ${selectedPeriod} globais aplicadas!`);
+        await loadCollaboratorsForMonth(selectedMonth);
+      } else toast.error(data.error || 'Erro ao salvar');
+    } catch { toast.error('Erro de conexão'); }
+  };
+
+  const saveTeamMetrics = async () => {
+    if (!teamSelected || !isEditable) return;
+    const body = {
+      equipe: teamSelected.trim(),
+      periodo: teamPeriod,
+      peso_assinados: Number(teamAssinados),
+      peso_ganhos: Number(teamGanhos),
+      bonus: Number(teamBonus),
+      data_metrica: selectedMonth,
+    };
+    try {
+      const headers = await getCsrfHeaders();
+      const res = await fetch(`${API_BASE}/admin/update-team-metrics`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(body),
+        credentials: "include",
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Metas ${teamPeriod} da equipe ${teamSelected} atualizadas!`);
+        await loadCollaboratorsForMonth(selectedMonth);
+      } else toast.error(data.error || "Erro ao salvar");
+    } catch (err) {
+      console.error("Erro ao salvar metas da equipe:", err);
+      toast.error("Erro de conexão");
+    }
+  };
+
+  const saveEdit = async (id: number) => {
+    if (editForm.assinados === undefined || editForm.ganhos === undefined || !isEditable) return;
+    const collab = collaborators.find(c => c.id === id);
+    if (!collab) return;
+    setSavingId(id);
+    
+    const email = getCollaboratorEmail(collab);
+    const payload = {
+      userId: id,
+      email: email,
+      nome: collab.name,
+      meta_diario_assinados: selectedPeriod === 'diario' ? Number(editForm.assinados) : Number(collab.metaDiarioAssinados),
+      meta_diario_ganhos: selectedPeriod === 'diario' ? Number(editForm.ganhos) : Number(collab.metaDiarioGanhos),
+      meta_semanal_assinados: selectedPeriod === 'semanal' ? Number(editForm.assinados) : Number(collab.metaSemanalAssinados),
+      meta_semanal_ganhos: selectedPeriod === 'semanal' ? Number(editForm.ganhos) : Number(collab.metaSemanalGanhos),
+      meta_mensal_assinados: selectedPeriod === 'mensal' ? Number(editForm.assinados) : Number(collab.metaMensalAssinados),
+      meta_mensal_ganhos: selectedPeriod === 'mensal' ? Number(editForm.ganhos) : Number(collab.metaMensalGanhos),
+      comissao_colaborador: Number(collab.comissao) || 0,
+      comissao_bonus: Number(collab.bonusComissao) || 0,
+      data_metrica: selectedMonth,
+    };
+    
+    console.log('📤 [saveEdit] Payload enviado:', payload);
+    
+    try {
+      const headers = await getCsrfHeaders();
+      const res = await fetch(`${API_BASE}/admin/update-assessor-metrics`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Meta ${selectedPeriod} de ${collab.name} atualizada!`);
+        await loadCollaboratorsForMonth(selectedMonth);
+      } else {
+        toast.error(data.error || 'Erro ao salvar');
+        console.error('❌ Erro do backend:', data);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro de conexão com o servidor');
+    } finally {
+      setSavingId(null);
+      setEditingId(null);
+      setEditForm({});
+    }
+  };
+
+  const saveBonusEdit = async (id: number) => {
+    if (!isBonusEditable) return;
+    const collab = collaborators.find(c => c.id === id);
+    if (!collab) return;
+    setSavingId(id);
+    
+    const email = getCollaboratorEmail(collab);
+    const payload = {
+      userId: id,
+      email: email,
+      nome: collab.name,
+      meta_diario_assinados: Number(collab.metaDiarioAssinados),
+      meta_diario_ganhos: Number(collab.metaDiarioGanhos),
+      meta_semanal_assinados: Number(collab.metaSemanalAssinados),
+      meta_semanal_ganhos: Number(collab.metaSemanalGanhos),
+      meta_mensal_assinados: Number(collab.metaMensalAssinados),
+      meta_mensal_ganhos: Number(collab.metaMensalGanhos),
+      comissao_colaborador: Number(collab.comissao) || 0,
+      comissao_bonus: Number(editBonusValue),
+      data_metrica: selectedMonth,
+    };
+    
+    console.log('📤 [saveBonusEdit] Payload enviado:', payload);
+    
+    try {
+      const headers = await getCsrfHeaders();
+      const res = await fetch(`${API_BASE}/admin/update-assessor-metrics`, {
+        method: 'POST',
+        headers,
+        body: JSON.stringify(payload),
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(`Bônus de ${collab.name} atualizado para ${formatCurrency(editBonusValue)}`);
+        await loadCollaboratorsForMonth(selectedMonth);
+      } else {
+        toast.error(data.error || 'Erro ao salvar bônus');
+        console.error('❌ Erro do backend:', data);
+      }
+    } catch (err) {
+      console.error(err);
+      toast.error('Erro de conexão');
+    } finally {
+      setSavingId(null);
+      setEditingBonusId(null);
+      setEditBonusValue(0);
+    }
+  };
+
+  const startEdit = (collab: any) => {
+    if (!isIndividualEditable(collab)) return;
+    const meta = getCycleMetaForPeriod(collab, selectedPeriod);
+    setEditingId(collab.id);
+    setEditForm({ assinados: meta.assinados, ganhos: meta.ganhos });
+  };
+  const startEditBonus = (collab: any) => {
+    if (!isBonusEditable) return;
+    setEditingBonusId(collab.id);
+    setEditBonusValue(collab.bonusComissao || getBonusPorCiclo(collab));
+  };
+  const cancelEdit = () => { setEditingId(null); setEditForm({}); };
+  const cancelEditBonus = () => { setEditingBonusId(null); setEditBonusValue(0); };
+
+  const generateNextMonth = async () => {
+    try {
+      const headers = await getCsrfHeaders();
+      const res = await fetch(`${API_BASE}/admin/generate-next-month`, {
+        method: 'POST',
+        headers,
+        credentials: 'include',
+      });
+      const data = await res.json();
+      if (data.success) {
+        toast.success(data.message);
+        await refreshMonths();
+        setSelectedMonth(nextMonthStr);
+      } else toast.error(data.error || 'Erro ao gerar próximo mês');
+    } catch { toast.error('Erro de conexão'); }
+  };
+
+  const handleRecalculateHierarchy = async () => {
+    if (!isAdminOnly) return;
+    setRecalculating(true);
+    try {
+      const result = await recalculateHierarchyWeights();
+      toast.success(result.message || 'Hierarquia recalculada com sucesso!');
+      await loadCollaboratorsForMonth(selectedMonth);
+    } catch (err: any) {
+      toast.error(err.message || 'Erro ao recalcular hierarquia');
+    } finally {
+      setRecalculating(false);
+    }
+  };
+
+  // ========== RENDER ==========
+  return (
+    <DashboardLayout title="Configurações" subtitle="Gerencie metas e bônus do sistema">
+      <div className="space-y-5">
+        {/* AVISO DE BLOQUEIO + BOTÃO GERAR PRÓXIMO MÊS */}
+        {isLocked && (
+          <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 flex items-center gap-3 animate-fade-in-up">
+            <CalendarPlus className="w-5 h-5 text-amber-600 mt-0.5 flex-shrink-0" aria-hidden="true" />
+            <div className="flex-1">
+              <p className="text-sm font-bold text-amber-800">Período de fechamento</p>
+              <p className="text-xs text-amber-700 mt-1">
+                {isPastMonth
+                  ? 'Este mês já foi encerrado e não pode ser alterado.'
+                  : `De 25/${now.getMonth() + 1} até ${new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate()}/${now.getMonth() + 1} as alterações estão bloqueadas.`}
+              </p>
+            </div>
+            <div className="flex-shrink-0">
+              {canGenerateNextMonth && (
+                <button onClick={generateNextMonth}
+                  disabled={isNextMonthGenerated}
+                  className={cn("px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-2 transition-colors",
+                    isNextMonthGenerated ? "bg-gray-300 text-gray-500 cursor-not-allowed" : "bg-green-600 text-white hover:bg-green-700")}
+                  aria-label={isNextMonthGenerated ? "Próximo mês já foi gerado" : "Gerar registros do próximo mês"}
+                  title={isNextMonthGenerated ? "Próximo mês já foi gerado" : "Gerar registros do próximo mês"}>
+                  <CalendarPlus className="w-4 h-4" aria-hidden="true" />
+                  {isNextMonthGenerated ? "Próximo mês já gerado" : "Gerar próximo mês"}
+                </button>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* SELETOR DE MÊS */}
+        <div className="flex items-center gap-3 bg-white p-3 rounded-xl shadow-sm">
+          <Calendar className="w-5 h-5 text-[#09175b]" aria-hidden="true" />
+          <label htmlFor="monthSelect" className="text-sm font-semibold text-gray-600">Mês de referência:</label>
+          <select id="monthSelect" value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)}
+            className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white"
+            aria-label="Selecione o mês de referência">
+            {availableMonths.length > 0
+              ? availableMonths.map(m => <option key={m} value={m}>{formatMonthYear(m)}</option>)
+              : <option value={`${currentMonthPrefix}-01`}>{formatMonthYear(`${currentMonthPrefix}-01`)}</option>}
+          </select>
+          <button onClick={refreshMonths} disabled={loadingMonths}
+            className="p-2 text-gray-500 hover:text-[#09175b] transition-colors"
+            aria-label="Atualizar lista de meses" title="Atualizar meses">
+            <RefreshCw className={cn("w-4 h-4", loadingMonths && "animate-spin")} aria-hidden="true" />
+          </button>
+          {monthsError && (
+            <div className="flex items-center gap-1 text-xs text-red-600" role="status">
+              <AlertTriangle className="w-3.5 h-3.5" aria-hidden="true" />
+              <span>Erro ao carregar meses</span>
+            </div>
+          )}
+          {isLocked && <span className="text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded-full font-medium">Bloqueado</span>}
+        </div>
+
+        {/* CONFIGURAÇÕES GLOBAIS */}
+        <div className="madm-card animate-fade-in-up">
+          <div className="px-5 py-3 border-b border-gray-100">
+            <div className="flex items-center gap-2">
+              <Settings className="w-4 h-4 text-[#09175b]" aria-hidden="true" />
+              <h3 className="text-sm font-bold text-[#09175b]">Configurações Globais</h3>
+            </div>
+          </div>
+          <div className="p-4">
+            <div className="mb-4">
+              <span className="text-xs font-medium text-gray-600">Aplicar para o período:</span>
+              <div className="flex gap-2 mt-1">
+                {(['diario','semanal','mensal'] as CicloPeriodo[]).map(p => (
+                  <button key={p} onClick={() => setSelectedPeriod(p)}
+                    className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                      selectedPeriod === p ? "bg-[#09175b] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}
+                    aria-label={`Selecionar período ${p === 'diario' ? 'diário' : p === 'semanal' ? 'semanal' : 'mensal'}`}>
+                    {p === 'diario' ? 'Diário' : p === 'semanal' ? 'Semanal' : 'Mensal'}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              <div className="bg-gray-50 rounded-lg p-3">
+                <label htmlFor="globalPesoAssinados" className="block text-xs font-medium text-gray-600 mb-1">Peso de Assinados</label>
+                <input id="globalPesoAssinados" type="number" min="1"
+                  value={selectedPeriod === 'diario' ? globalConfig.pesoDiarioAssinados : selectedPeriod === 'semanal' ? globalConfig.pesoSemanalAssinados : globalConfig.pesoMensalAssinados}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value) || 1;
+                    if (selectedPeriod === 'diario') updateGlobalConfig({ pesoDiarioAssinados: v });
+                    else if (selectedPeriod === 'semanal') updateGlobalConfig({ pesoSemanalAssinados: v });
+                    else updateGlobalConfig({ pesoMensalAssinados: v });
+                  }}
+                  disabled={isAllDisabled}
+                  className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                  aria-label="Peso de assinados" />
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <label htmlFor="globalPesoGanhos" className="block text-xs font-medium text-gray-600 mb-1">Peso de Ganhos</label>
+                <input id="globalPesoGanhos" type="number" min="1"
+                  value={selectedPeriod === 'diario' ? globalConfig.pesoDiarioGanhos : selectedPeriod === 'semanal' ? globalConfig.pesoSemanalGanhos : globalConfig.pesoMensalGanhos}
+                  onChange={(e) => {
+                    const v = parseInt(e.target.value) || 1;
+                    if (selectedPeriod === 'diario') updateGlobalConfig({ pesoDiarioGanhos: v });
+                    else if (selectedPeriod === 'semanal') updateGlobalConfig({ pesoSemanalGanhos: v });
+                    else updateGlobalConfig({ pesoMensalGanhos: v });
+                  }}
+                  disabled={isAllDisabled}
+                  className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                  aria-label="Peso de ganhos" />
+              </div>
+              <div className="bg-gray-50 rounded-lg p-3">
+                <label htmlFor="globalBonus" className="block text-xs font-medium text-gray-600 mb-1">Bônus por Ciclo (R$)</label>
+                <input id="globalBonus" type="number" min="1"
+                  value={globalConfig.valorBonus}
+                  onChange={(e) => updateGlobalConfig({ valorBonus: parseInt(e.target.value) || 1 })}
+                  disabled={!isBonusEditable}
+                  className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                  aria-label="Valor do bônus por ciclo" />
+              </div>
+            </div>
+            <div className="flex justify-end mt-4">
+              <button onClick={saveGlobalConfig} disabled={!isEditable}
+                className="text-xs flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#09175b] text-white disabled:opacity-50"
+                aria-label="Aplicar configurações globais a todos os colaboradores">
+                <Save className="w-3.5 h-3.5" aria-hidden="true" /> Aplicar a todos
+              </button>
+            </div>
+          </div>
+        </div>
+
+        {/* METAS POR EQUIPE */}
+        {filteredEquipeConfigs.length > 0 && (
+          <div className="madm-card animate-fade-in-up">
+            <div className="px-5 py-3 border-b border-gray-100">
+              <div className="flex items-center gap-2">
+                <Briefcase className="w-4 h-4 text-[#34a853]" aria-hidden="true" />
+                <h3 className="text-sm font-bold text-[#09175b]">Metas por Equipe</h3>
+              </div>
+            </div>
+            <div className="p-4">
+              <div className="flex flex-wrap items-end gap-4">
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <label htmlFor="teamSelect" className="block text-xs font-medium text-gray-600 mb-1">Equipe</label>
+                  <select id="teamSelect" value={teamSelected} onChange={(e) => setTeamSelected(e.target.value)}
+                    className="px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white" aria-label="Selecionar equipe">
+                    {filteredEquipeConfigs.map(eq => <option key={eq.id} value={eq.nome}>{eq.nome}</option>)}
+                  </select>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <span className="block text-xs font-medium text-gray-600 mb-1">Período</span>
+                  <div className="flex gap-2">
+                    {(['diario','semanal','mensal'] as CicloPeriodo[]).map(p => (
+                      <button key={p} onClick={() => setTeamPeriod(p)}
+                        className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                          teamPeriod === p ? "bg-[#09175b] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}
+                        aria-label={`Período ${p}`}>
+                        {p === 'diario' ? 'Diário' : p === 'semanal' ? 'Semanal' : 'Mensal'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <label htmlFor="teamAssinados" className="block text-xs font-medium text-gray-600 mb-1">Peso Assinados</label>
+                  <input id="teamAssinados" type="number" min="1" value={teamAssinados}
+                    onChange={(e) => setTeamAssinados(parseInt(e.target.value) || 1)}
+                    disabled={isAllDisabled}
+                    className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                    aria-label="Peso assinados equipe" />
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <label htmlFor="teamGanhos" className="block text-xs font-medium text-gray-600 mb-1">Peso Ganhos</label>
+                  <input id="teamGanhos" type="number" min="1" value={teamGanhos}
+                    onChange={(e) => setTeamGanhos(parseInt(e.target.value) || 0)}
+                    disabled={isAllDisabled}
+                    className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                    aria-label="Peso ganhos equipe" />
+                </div>
+                <div className="bg-gray-50 rounded-lg p-2">
+                  <label htmlFor="teamBonus" className="block text-xs font-medium text-gray-600 mb-1">Bônus (R$)</label>
+                  <input id="teamBonus" type="number" min="1" value={teamBonus}
+                    onChange={(e) => setTeamBonus(parseInt(e.target.value) || 1)}
+                    disabled={!isBonusEditable}
+                    className="w-24 text-sm px-2 py-1.5 rounded-lg border border-gray-200 text-center disabled:opacity-50"
+                    aria-label="Bônus equipe" />
+                </div>
+                <div className="pb-1">
+                  <button onClick={saveTeamMetrics} disabled={!isEditable}
+                    className="text-xs flex items-center gap-1.5 px-3 py-2 rounded-lg bg-[#09175b] text-white h-9 disabled:opacity-50"
+                    aria-label="Salvar metas da equipe">
+                    <Save className="w-3.5 h-3.5" aria-hidden="true" /> Salvar
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* VISÃO GERAL */}
+        <div className="grid grid-cols-2 gap-3">
+          <div className="madm-card p-3 text-center">
+            <Users className="w-5 h-5 text-[#09175b] mx-auto mb-1" aria-hidden="true" />
+            <div className="text-xl font-black text-[#09175b]">{totalStats.totalColaboradores}</div>
+            <div className="text-[10px] text-gray-500">Colaboradores</div>
+          </div>
+          <div className="madm-card p-3 text-center">
+            <Award className="w-5 h-5 text-[#34a853] mx-auto mb-1" aria-hidden="true" />
+            <div className="text-xl font-black text-[#34a853]">{filteredEquipeConfigs.length}</div>
+            <div className="text-[10px] text-gray-500">Equipes</div>
+          </div>
+        </div>
+
+        {/* FILTROS E PESQUISA */}
+        <div className="madm-card p-3">
+          <div className="flex flex-col sm:flex-row gap-2">
+            <div className="flex-1 relative">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
+              <input type="text" placeholder="Buscar por nome ou e-mail..." value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full pl-8 pr-2 py-1.5 text-xs rounded-lg border border-gray-200"
+                aria-label="Buscar colaborador por nome ou e-mail" title="Buscar colaborador" />
+            </div>
+            <div className="flex items-center gap-2">
+              <Filter className="w-3.5 h-3.5 text-gray-400" aria-hidden="true" />
+              <label htmlFor="equipeFilter" className="sr-only">Filtrar por equipe</label>
+              <select id="equipeFilter" value={selectedEquipe} onChange={(e) => setSelectedEquipe(e.target.value)}
+                className="px-2 py-1.5 text-xs rounded-lg border border-gray-200"
+                aria-label="Filtrar colaboradores por equipe">
+                {equipeNomes.map(eq => <option key={eq}>{eq}</option>)}
+              </select>
+            </div>
+          </div>
+        </div>
+
+        {/* SELETOR DE PERÍODO */}
+        <div className="madm-card p-3 flex items-center gap-3">
+          <span className="text-xs font-medium text-gray-600">Exibir metas para:</span>
+          <div className="flex gap-2">
+            {(['diario','semanal','mensal'] as CicloPeriodo[]).map(p => (
+              <button key={p} onClick={() => setSelectedPeriod(p)}
+                className={cn("px-3 py-1.5 rounded-lg text-xs font-medium transition-all",
+                  selectedPeriod === p ? "bg-[#09175b] text-white" : "bg-gray-100 text-gray-600 hover:bg-gray-200")}
+                aria-label={`Exibir metas do período ${p}`}>
+                {p === 'diario' ? 'Diário' : p === 'semanal' ? 'Semanal' : 'Mensal'}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        {/* TABELA DE METAS POR COLABORADOR */}
+        <div className="madm-card animate-fade-in-up">
+          <div className="px-5 py-3 border-b border-gray-100">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <User className="w-4 h-4 text-[#09175b]" aria-hidden="true" />
+                <h3 className="text-sm font-bold text-[#09175b]">Metas por Colaborador</h3>
+              </div>
+              {isAdminOnly && (
+                <button
+                  onClick={handleRecalculateHierarchy}
+                  disabled={recalculating}
+                  className="px-3 py-1.5 rounded-lg text-xs font-semibold flex items-center gap-1.5 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                  aria-label="Recalcular pesos de supervisores e coordenadores"
+                  title="Recalcular hierarquia"
+                >
+                  <RefreshCw className={cn("w-3.5 h-3.5", recalculating && "animate-spin")} aria-hidden="true" />
+                  Recalcular Hierarquia
+                </button>
+              )}
+            </div>
+          </div>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead>
+                <tr className="border-b border-gray-100 bg-gray-50/50">
+                  <th className="text-left px-4 py-2 text-[10px] font-semibold text-gray-500">Colaborador</th>
+                  <th className="text-left px-4 py-2 text-[10px] font-semibold text-gray-500">Equipe</th>
+                  <th className="text-center px-4 py-2 text-[10px] font-semibold text-gray-500">
+                    Meta (A/G) {selectedPeriod === 'diario' ? '(diário)' : selectedPeriod === 'semanal' ? '(semanal)' : '(mensal)'}
+                  </th>
+                  <th className="text-center px-4 py-2 text-[10px] font-semibold text-gray-500">Metas Batidas</th>
+                  <th className="text-center px-4 py-2 text-[10px] font-semibold text-gray-500">Bônus Ciclo</th>
+                  <th className="text-center px-4 py-2 text-[10px] font-semibold text-gray-500">Bônus Estimado</th>
+                  <th className="text-center px-4 py-2 text-[10px] font-semibold text-gray-500">Ações</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredCollaborators.map((collab) => {
+                  const isEditing = editingId === collab.id;
+                  const isEditingBonus = editingBonusId === collab.id;
+                  const isExpanded = expandedId === collab.id;
+                  const currentMeta = getCycleMetaForPeriod(collab, selectedPeriod);
+                  const ciclosCompletos = getCiclosCompletos(collab, selectedPeriod);
+                  const bonusPorCiclo = getBonusPorCiclo(collab);
+                  const bonusEstimado = ciclosCompletos * bonusPorCiclo;
+                  const individualEditable = isIndividualEditable(collab);
+                  return (
+                    <React.Fragment key={collab.id}>
+                      <tr className="border-b border-gray-50 hover:bg-gray-50/50">
+                        <td className="px-4 py-2">
+                          <div className="flex items-center gap-2">
+                            <div className="w-7 h-7 rounded-full bg-gray-200 flex items-center justify-center text-xs font-bold">{collab.avatar}</div>
+                            <div>
+                              <div className="text-xs font-medium">{collab.name}</div>
+                              <div className="text-[10px] text-gray-400">{collab.email}</div>
+                            </div>
+                          </div>
+                        </td>
+                        <td className="px-4 py-2">
+                          <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-gray-100">{collab.equipeNome}</span>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          {isEditing ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <input type="number" min="1" value={editForm.assinados ?? currentMeta.assinados}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, assinados: parseInt(e.target.value) || 1 }))}
+                                className="w-12 text-center text-xs px-1 py-0.5 rounded border" aria-label="Meta de assinados" />
+                              <span className="text-xs">/</span>
+                              <input type="number" min="1" value={editForm.ganhos ?? currentMeta.ganhos}
+                                onChange={(e) => setEditForm(prev => ({ ...prev, ganhos: parseInt(e.target.value) || 1 }))}
+                                className="w-12 text-center text-xs px-1 py-0.5 rounded border" aria-label="Meta de ganhos" />
+                            </div>
+                          ) : (
+                            <div className="flex flex-col items-center">
+                              <span className="text-xs font-medium">{currentMeta.assinados}/{currentMeta.ganhos}</span>
+                              <div className="w-12 mt-0.5 h-1 bg-gray-100 rounded-full overflow-hidden" aria-hidden="true">
+                                <div className="h-full bg-[#09175b] rounded-full" style={{ width: `${Math.min((collab.assinados / currentMeta.assinados) * 100, 100)}%` }} />
+                              </div>
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-sm font-bold text-[#09175b]">{ciclosCompletos}</span>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          {isEditingBonus ? (
+                            <div className="flex items-center justify-center gap-1">
+                              <input type="number" min="1" value={editBonusValue} onChange={(e) => setEditBonusValue(parseInt(e.target.value) || 1)}
+                                className="w-20 text-center text-xs px-1 py-0.5 rounded border" aria-label="Novo valor do bônus por ciclo" />
+                              <button onClick={() => saveBonusEdit(collab.id)} disabled={savingId === collab.id}
+                                className="p-0.5 rounded hover:bg-green-50" aria-label="Salvar novo bônus">
+                                <Save className="w-3.5 h-3.5 text-green-600" aria-hidden="true" />
+                              </button>
+                              <button onClick={cancelEditBonus} className="p-0.5 rounded hover:bg-red-50" aria-label="Cancelar edição de bônus">
+                                <X className="w-3.5 h-3.5 text-red-500" aria-hidden="true" />
+                              </button>
+                            </div>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
+                              <span className="text-sm font-bold text-[#34a853]">{formatCurrency(bonusPorCiclo)}</span>
+                              {isBonusEditable && (
+                                <button onClick={() => startEditBonus(collab)} className="p-0.5 rounded hover:bg-gray-100"
+                                  aria-label={`Editar bônus de ${collab.name}`} title="Editar bônus individual">
+                                  <Edit2 className="w-3 h-3 text-gray-500" aria-hidden="true" />
+                                </button>
+                              )}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <span className="text-sm font-bold text-[#34a853]">{formatCurrency(bonusEstimado)}</span>
+                        </td>
+                        <td className="px-4 py-2 text-center">
+                          <div className="flex items-center justify-center gap-1">
+                            {isEditing ? (
+                              <>
+                                <button onClick={() => saveEdit(collab.id)} disabled={!individualEditable || savingId === collab.id}
+                                  className="p-0.5 rounded hover:bg-green-50 disabled:opacity-50" aria-label="Salvar edição de meta">
+                                  <Save className="w-3.5 h-3.5 text-green-600" aria-hidden="true" />
+                                </button>
+                                <button onClick={cancelEdit} className="p-0.5 rounded hover:bg-red-50" aria-label="Cancelar edição de meta">
+                                  <X className="w-3.5 h-3.5 text-red-500" aria-hidden="true" />
+                                </button>
+                              </>
+                            ) : (
+                              <button onClick={() => startEdit(collab)} disabled={!individualEditable}
+                                className="p-0.5 rounded hover:bg-gray-100 disabled:opacity-50"
+                                aria-label={individualEditable ? `Editar meta de ${collab.name}` : "Metas automáticas (não editável)"}
+                                title={individualEditable ? "Editar meta" : "Metas automáticas"}>
+                                <Edit2 className="w-3.5 h-3.5 text-gray-500" aria-hidden="true" />
+                              </button>
+                            )}
+                            <button onClick={() => toggleExpand(collab.id)} className="p-0.5 rounded hover:bg-gray-100"
+                              aria-label={isExpanded ? "Recolher detalhes" : "Expandir detalhes"}>
+                              {isExpanded ? <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" /> : <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />}
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                      {isExpanded && (
+                        <tr className="bg-gray-50/50">
+                          <td colSpan={7} className="px-4 py-2">
+                            <div className="grid grid-cols-5 gap-2 text-center">
+                              <div className="bg-white rounded p-2">
+                                <FileText className="w-3 h-3 text-[#34a853] mx-auto mb-0.5" aria-hidden="true" />
+                                <div className="text-xs font-bold text-[#34a853]">{collab.emitidos}</div>
+                                <div className="text-[9px] text-gray-400">Emitidos</div>
+                              </div>
+                              <div className="bg-white rounded p-2">
+                                <CheckCircle className="w-3 h-3 text-[#09175b] mx-auto mb-0.5" aria-hidden="true" />
+                                <div className="text-xs font-bold text-[#09175b]">{collab.assinados}</div>
+                                <div className="text-[9px] text-gray-400">Assinados</div>
+                              </div>
+                              <div className="bg-white rounded p-2">
+                                <Archive className="w-3 h-3 text-[#045b5b] mx-auto mb-0.5" aria-hidden="true" />
+                                <div className="text-xs font-bold text-[#045b5b]">{collab.protocolados || 0}</div>
+                                <div className="text-[9px] text-gray-400">Protocolados</div>
+                              </div>
+                              <div className="bg-white rounded p-2">
+                                <Award className="w-3 h-3 text-[#34a853] mx-auto mb-0.5" aria-hidden="true" />
+                                <div className="text-xs font-bold text-[#34a853]">{collab.ganhos}</div>
+                                <div className="text-[9px] text-gray-400">Ganhos</div>
+                              </div>
+                              <div className="bg-white rounded p-2">
+                                <XCircle className="w-3 h-3 text-red-500 mx-auto mb-0.5" aria-hidden="true" />
+                                <div className="text-xs font-bold text-red-500">{collab.perdidos}</div>
+                                <div className="text-[9px] text-gray-400">Perdidos</div>
+                              </div>
+                            </div>
+                          </td>
+                        </tr>
+                      )}
+                    </React.Fragment>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+          {filteredCollaborators.length === 0 && (
+            <div className="text-center py-8">
+              <Users className="w-8 h-8 text-gray-300 mx-auto mb-2" aria-hidden="true" />
+              <p className="text-xs text-gray-400">Nenhum colaborador encontrado</p>
+            </div>
+          )}
+        </div>
+      </div>
+    </DashboardLayout>
+  );
+}

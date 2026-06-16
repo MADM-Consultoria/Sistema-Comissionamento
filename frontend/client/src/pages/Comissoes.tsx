@@ -1,0 +1,463 @@
+// src/pages/Comissoes.tsx
+import { useState, useEffect, useMemo, useRef, useCallback } from "react";
+import { useLocation } from "wouter";
+import DashboardLayout from "@/components/DashboardLayout";
+import FilterBar from "@/components/FilterBar";
+import { useAppStore, formatCurrency } from "@/lib/dataStore";
+import { useAccessControl } from "@/hooks/useAccessControl";
+import {
+  DollarSign, Award, FileCheck, Target, Loader2, RefreshCw,
+} from "lucide-react";
+import {
+  BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, Cell,
+} from "recharts";
+
+type PeriodoMeta = 'diario' | 'semanal' | 'mensal';
+
+// 🔒 Equipes e grupos que não devem aparecer nos cálculos de comissão
+const EXCLUDED_TEAMS = [
+  'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
+  'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
+  'Equipe Murilo Balsalobre', 'Comercial', 'Backoffice', 'CEO', 'Prontuário',
+  'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo'
+];
+
+const EXCLUDED_GROUPS = [
+  "Supervisor", "Salesops", "Sales ops", "Coordenador", "CEO",
+  "Diretoria", "Desativado", "Juridico", "Ultravita", "Diligencia",
+  "Marketing","Gerência","Contrato", "Dr. Felipe Marx","Administrativo"
+];
+
+const normalizeText = (text: string) => (text || '').trim().toLowerCase();
+
+// 🔥 Identifica se o colaborador é do grupo especial (apenas assinados)
+function isSpecialGroupColaborador(colaborador: any): boolean {
+  const produto = (colaborador.produto || '').toLowerCase();
+  const grupo = (colaborador.grupo || '').toLowerCase();
+  return produto === 'quinquenio' || produto === 'concomitante' ||
+         grupo === 'quinquenio' || grupo === 'concomitante';
+}
+
+function obterMetaPorPeriodo(colaborador: any, periodo: PeriodoMeta) {
+  switch (periodo) {
+    case 'diario':
+      return {
+        assinados: colaborador.metaDiarioAssinados ?? 3,
+        ganhos: colaborador.metaDiarioGanhos ?? 3,
+      };
+    case 'semanal':
+      return {
+        assinados: colaborador.metaSemanalAssinados ?? 15,
+        ganhos: colaborador.metaSemanalGanhos ?? 15,
+      };
+    default:
+      return {
+        assinados: colaborador.metaMensalAssinados ?? 60,
+        ganhos: colaborador.metaMensalGanhos ?? 60,
+      };
+  }
+}
+
+// 🔥 Corrigido: o parâmetro isSpecial agora é específico do colaborador
+function calcularCiclosPeriodo(colaborador: any, periodo: PeriodoMeta, isSpecial: boolean): number {
+  const meta = obterMetaPorPeriodo(colaborador, periodo);
+  const assinados = colaborador.assinados || 0;
+  const ganhos = isSpecial ? 0 : (colaborador.ganhos || 0);
+  if (meta.assinados <= 0) return 0;
+  if (isSpecial) {
+    return Math.floor(assinados / meta.assinados);
+  }
+  if (meta.ganhos <= 0) return 0;
+  return Math.floor(Math.min(assinados / meta.assinados, ganhos / meta.ganhos));
+}
+
+function obterBonusCiclo(colaborador: any, configEquipe: any[], configGlobal: any): number {
+  if (colaborador.bonusComissao && colaborador.bonusComissao > 0) return colaborador.bonusComissao;
+  const equipe = configEquipe.find((e: any) => e.nome === colaborador.equipeNome);
+  return equipe?.bonus || configGlobal.valorBonus;
+}
+
+export default function Comissoes() {
+  const {
+    currentStartDate, currentEndDate,
+    collaborators: storeColabs, globalConfig, equipeConfigs,
+    loadCollaboratorsAndMetrics,
+    loadWeeklyPerformanceData,
+    loadRawMetrics,
+  } = useAppStore();
+
+  const { currentUser } = useAccessControl();
+
+  const [filters, setFilters] = useState<{
+    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
+  }>({ equipe: "todas", colaborador: "todos", produto: "Todos" });
+
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [loadingMessage, setLoadingMessage] = useState("Carregando dados...");
+  const [error, setError] = useState<string | null>(null);
+
+  const initialLoadDone = useRef(false);
+  const lastFiltersRef = useRef(filters);
+  const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
+
+  // ========== Função de recarga ==========
+  const reloadData = useCallback(async (showRefreshing = false) => {
+    if (showRefreshing) setRefreshing(true);
+    try {
+      const equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
+      const colaboradorApi = filters.colaborador === "todos" ? undefined : filters.colaborador;
+      const colaboradorIdApi = filters.colaboradorId;
+      const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
+      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
+      await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
+      await loadWeeklyPerformanceData();
+    } catch (err: any) {
+      console.error("Erro ao recarregar dados:", err);
+      setError(err.message || "Falha ao recarregar dados.");
+    } finally {
+      if (showRefreshing) setRefreshing(false);
+    }
+  }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
+
+  // ========== Carregamento inicial ==========
+  useEffect(() => {
+    if (!currentStartDate || !currentEndDate) return;
+
+    const datesChanged =
+      currentStartDate !== lastDatesRef.current.start ||
+      currentEndDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
+
+    lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
+    lastFiltersRef.current = { ...filters };
+
+    const load = async () => {
+      setLoading(true);
+      setError(null);
+      try {
+        await reloadData(false);
+        initialLoadDone.current = true;
+      } catch (err: any) {
+        setError(err.message || "Falha ao carregar dados.");
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    load();
+  }, [currentStartDate, currentEndDate, filters, reloadData]);
+
+  // ========== Polling ==========
+  useEffect(() => {
+    if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
+
+    const refresh = async () => {
+      if (refreshing) return;
+      if (document.visibilityState === 'visible') {
+        await reloadData(true);
+      }
+    };
+
+    const intervalId = setInterval(refresh, 60000);
+
+    return () => {
+      clearInterval(intervalId);
+    };
+  }, [currentStartDate, currentEndDate, reloadData, refreshing]);
+
+  // Filtra colaboradores removendo equipes e grupos excluídos
+  const filteredColabs = useMemo(() => {
+    let filtered = storeColabs.filter(c => {
+      if (EXCLUDED_TEAMS.some(team => normalizeText(c.equipeNome) === normalizeText(team))) return false;
+      if (EXCLUDED_GROUPS.some(group => normalizeText(c.grupo) === normalizeText(group))) return false;
+
+      if (filters.equipe !== "todas" && c.equipeNome !== filters.equipe) return false;
+      if (filters.colaborador !== "todos" && c.name !== filters.colaborador) return false;
+      return true;
+    });
+
+    // Garante que o usuário logado apareça mesmo que esteja nos filtros de exclusão
+    const hasCurrentUser = filtered.some(c => c.id === currentUser?.id);
+    if (currentUser && !hasCurrentUser) {
+      const userColab = storeColabs.find(c => c.id === currentUser.id);
+      if (userColab) filtered = [userColab, ...filtered];
+    }
+    return filtered;
+  }, [storeColabs, filters, currentUser]);
+
+  // Determina se o filtro de produto global é especial (usado apenas para UI, não para cálculo)
+  const isSpecialFilter = filters.produto === "Quinquenio" || filters.produto === "Concomitante";
+
+  // Cálculo da comissão – agora baseado no colaborador individual
+  const commissionData = useMemo(() => {
+    const periods: PeriodoMeta[] = ['diario', 'semanal', 'mensal'];
+    return filteredColabs.map(col => {
+      const isSpecial = isSpecialGroupColaborador(col);
+      let totalCommission = 0;
+      let totalCycles = 0;
+      const periodDetails: any = {};
+      for (const period of periods) {
+        const cycles = calcularCiclosPeriodo(col, period, isSpecial);
+        const bonus = obterBonusCiclo(col, equipeConfigs, globalConfig);
+        const commissionPeriod = cycles * bonus;
+        totalCommission += commissionPeriod;
+        totalCycles += cycles;
+        periodDetails[period] = { cycles, commission: commissionPeriod, bonus };
+      }
+      const monthlyMeta = obterMetaPorPeriodo(col, 'mensal');
+      const metaAssinados = monthlyMeta.assinados;
+      const metaGanhos = isSpecial ? 0 : monthlyMeta.ganhos;
+      return {
+        id: col.id,
+        name: col.name,
+        totalCommission,
+        totalCycles,
+        assinados: col.assinados || 0,
+        ganhos: isSpecial ? 0 : (col.ganhos || 0),
+        metaAssinados,
+        metaGanhos,
+        avatar: col.avatar || col.name.charAt(0).toUpperCase(),
+        group: col.grupo,
+        periodDetails,
+        isSpecial, // armazena para uso na UI
+      };
+    }).sort((a, b) => b.totalCommission - a.totalCommission);
+  }, [filteredColabs, equipeConfigs, globalConfig]);
+
+  const totals = useMemo(() => {
+    const assinados = commissionData.reduce((s, i) => s + i.assinados, 0);
+    const ganhos = commissionData.reduce((s, i) => s + i.ganhos, 0);
+    const comissao = commissionData.reduce((s, i) => s + i.totalCommission, 0);
+    const ciclos = commissionData.reduce((s, i) => s + i.totalCycles, 0);
+    return { assinados, ganhos, comissao, ciclos };
+  }, [commissionData]);
+
+  const avgProgress = useMemo(() => {
+    if (!commissionData.length) return 0;
+    const sum = commissionData.reduce((acc, i) => {
+      const pctAss = i.metaAssinados ? (i.assinados / i.metaAssinados) * 100 : 0;
+      const pctGan = i.metaGanhos ? (i.ganhos / i.metaGanhos) * 100 : 100;
+      return acc + Math.min(pctAss, pctGan);
+    }, 0);
+    return sum / commissionData.length;
+  }, [commissionData]);
+
+  const handleFilterChange = (newFilters: {
+    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
+  }) => {
+    setFilters(newFilters);
+  };
+
+  const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
+
+  const CustomTooltip = ({ active, payload, label }: any) => {
+    if (active && payload?.length) {
+      return (
+        <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg text-xs">
+          <p className="font-semibold text-gray-700 mb-1">{label}</p>
+          {payload.map((entry: any, i: number) => (
+            <p key={i} style={{ color: entry.color }} className="font-medium">
+              {entry.name}: {typeof entry.value === 'number' ? formatCurrency(entry.value) : entry.value}
+            </p>
+          ))}
+        </div>
+      );
+    }
+    return null;
+  };
+
+  const summaryCards = [
+    {
+      label: "Comissão Total Estimada", value: totals.comissao, icon: DollarSign,
+      color: "#09175b", bg: "#eff6ff", sub: "Soma das comissões diária, semanal e mensal",
+    },
+    {
+      label: "Metas Batidas (Total)", value: totals.ciclos, icon: Award,
+      color: "#34a853", bg: "#f0fdf4", sub: "Diário + Semanal + Mensal",
+    },
+    {
+      label: isSpecialFilter ? "Assinados" : "Vendas Fechadas",
+      value: isSpecialFilter ? totals.assinados : totals.ganhos,
+      icon: FileCheck, color: "#f59e0b", bg: "#fffbeb",
+      sub: isSpecialFilter ? "Total de assinados no período" : "Total de ganhos no período",
+    },
+    {
+      label: "Progresso Médio", value: avgProgress, icon: Target,
+      color: "#045b5b", bg: "#f0fdfa",
+      sub: "Média do menor percentual (assinados/ganhos mensais)",
+      isPercent: true,
+    },
+  ];
+
+  return (
+    <DashboardLayout title="Painel de Comissões" subtitle="Comissão calculada pela soma de metas batidas diárias, semanais e mensais">
+      {/* Indicador de atualização em tempo real */}
+      <div className="flex items-center justify-end gap-2 mb-2">
+        {refreshing && (
+          <div className="flex items-center gap-1.5 text-xs text-gray-500 animate-pulse">
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+            <span>Atualizando dados...</span>
+          </div>
+        )}
+        <span className="text-[10px] text-gray-400">
+          Atualizado {new Date().toLocaleTimeString()}
+        </span>
+      </div>
+
+      <FilterBar onFilterChange={handleFilterChange} showColaboradorFilter={true} className="mb-6" />
+
+      {loading && (
+        <div className="flex justify-center items-center py-4">
+          <Loader2 className="w-5 h-5 animate-spin text-[#09175b]" />
+          <span className="ml-2 text-sm text-gray-500">{loadingMessage}</span>
+        </div>
+      )}
+
+      {error && (
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center text-red-700 text-sm mb-4">
+          <p>{error}</p>
+          <button onClick={() => window.location.reload()} className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg text-xs">Recarregar</button>
+        </div>
+      )}
+
+      {!loading && filteredColabs.length === 0 && !error && (
+        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 text-center text-amber-800 text-sm">
+          Nenhum colaborador disponível para os filtros atuais.
+        </div>
+      )}
+
+      {!loading && filteredColabs.length > 0 && (
+        <>
+          {hasActiveFilters && (
+            <div className="mb-4 px-4 py-2 bg-blue-50 rounded-lg text-xs text-blue-700 flex gap-2 flex-wrap">
+              <span>📊</span>
+              <span>
+                Mostrando dados para:
+                {filters.equipe !== "todas" && ` Equipe ${filters.equipe}`}
+                {filters.colaborador !== "todos" && ` - ${filters.colaborador}`}
+                {filters.produto !== "Todos" && ` • Produto: ${filters.produto}`}
+              </span>
+            </div>
+          )}
+
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+            {summaryCards.map((card, idx) => {
+              const Icon = card.icon;
+              const displayValue = card.isPercent
+                ? `${card.value.toFixed(1)}%`
+                : card.label.includes("R$") || card.label.includes("Comissão")
+                ? formatCurrency(card.value)
+                : card.value.toLocaleString();
+              return (
+                <div key={card.label} className="madm-card p-5 animate-fade-in-up" style={{ animationDelay: `${idx * 80}ms` }}>
+                  <div className="flex items-center gap-3 mb-3">
+                    <div className="w-9 h-9 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: card.bg }}>
+                      <Icon className="w-4.5 h-4.5" style={{ color: card.color }} />
+                    </div>
+                    <span className="text-xs text-gray-500 font-medium">{card.label}</span>
+                  </div>
+                  <div className="madm-kpi-value text-2xl" style={{ color: "#09175b" }}>{displayValue}</div>
+                  <div className="text-xs text-gray-400 mt-1">{card.sub}</div>
+                </div>
+              );
+            })}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-6">
+            <div className="madm-card p-5 animate-fade-in-up" style={{ animationDelay: "320ms" }}>
+              <h3 className="text-sm font-bold text-[#09175b] mb-4">Comissão Total por Colaborador</h3>
+              {commissionData.length === 0 ? (
+                <div className="text-center text-gray-400 text-sm py-8">Nenhum colaborador com os filtros atuais.</div>
+              ) : (
+                <div className="max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                  <ResponsiveContainer width="100%" height={Math.max(300, commissionData.length * 35)}>
+                    <BarChart data={commissionData} layout="vertical" margin={{ left: 20, right: 20 }}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" horizontal={false} />
+                      <XAxis type="number" tick={{ fontSize: 11, fill: "#6b7280" }} tickFormatter={v => formatCurrency(v)} />
+                      <YAxis type="category" dataKey="name" tick={{ fontSize: 11, fill: "#374151" }} width={120} interval={0} />
+                      <Tooltip content={<CustomTooltip />} />
+                      <Bar dataKey="totalCommission" name="Comissão Total" radius={[0, 6, 6, 0]} barSize={24}>
+                        {commissionData.map((entry, i) => (
+                          <Cell key={i} fill={entry.totalCommission > 0 ? "#34a853" : "#e8eaed"} stroke={entry.totalCommission > 0 ? "#2d8f47" : "#d1d5db"} strokeWidth={1} />
+                        ))}
+                      </Bar>
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
+              )}
+            </div>
+
+            <div className="madm-card p-5 animate-fade-in-up" style={{ animationDelay: "400ms" }}>
+              <h3 className="text-sm font-bold text-[#09175b] mb-4">Metas Mensais vs Realizado</h3>
+              <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
+                {commissionData.map(item => {
+                  // Para colaboradores especiais, ignoramos ganhos
+                  const pctAss = item.metaAssinados ? (item.assinados / item.metaAssinados) * 100 : 0;
+                  const pctGan = item.isSpecial ? 100 : (item.metaGanhos ? (item.ganhos / item.metaGanhos) * 100 : 100);
+                  const pct = Math.min(pctAss, pctGan);
+                  const showGanhos = !item.isSpecial;
+                  return (
+                    <div key={item.name} className="flex flex-col gap-1">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 rounded-full bg-gradient-to-br from-blue-100 to-blue-200 flex items-center justify-center text-xs font-bold flex-shrink-0 shadow-sm">
+                          {item.avatar}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="flex justify-between text-sm mb-1">
+                            <span className="font-medium text-gray-700 truncate">{item.name}</span>
+                            <span className="text-gray-500 text-xs ml-2">
+                              {item.assinados}/{item.metaAssinados} A {showGanhos && `| ${item.ganhos}/${item.metaGanhos} G`}
+                              {item.isSpecial && <span className="text-blue-500 ml-1">(só A)</span>}
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-100 rounded-full h-2 overflow-hidden shadow-inner">
+                            <div
+                              className="h-2 rounded-full transition-all duration-500"
+                              style={{
+                                width: `${Math.min(pct, 100)}%`,
+                                background: pct >= 100 ? "linear-gradient(90deg, #34a853, #2d8f47)" : pct >= 70 ? "linear-gradient(90deg, #f59e0b, #e6a100)" : "linear-gradient(90deg, #09175b, #1e3a8a)",
+                              }}
+                            />
+                          </div>
+                        </div>
+                        <span className="text-sm font-bold text-[#09175b] w-18 text-right">{formatCurrency(item.totalCommission)}</span>
+                      </div>
+                      <div className="text-xs text-gray-500 ml-11 mt-0.5">
+                        Metas batidas (total): <span className="font-semibold text-[#09175b]">{item.totalCycles}</span>
+                        {item.periodDetails && (
+                          <span className="text-gray-400 ml-1">
+                            (D: {item.periodDetails.diario?.cycles || 0}, S: {item.periodDetails.semanal?.cycles || 0}, M: {item.periodDetails.mensal?.cycles || 0})
+                          </span>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+                {commissionData.length === 0 && (
+                  <div className="text-center text-gray-400 text-sm py-4">Nenhum colaborador com os filtros atuais.</div>
+                )}
+              </div>
+            </div>
+          </div>
+
+          <div className="madm-card p-5 animate-fade-in-up mb-6" style={{ animationDelay: "480ms" }}>
+            <h3 className="text-sm font-bold text-[#09175b] mb-3">Como a comissão é calculada</h3>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-gray-600">
+              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">1. Três períodos independentes:</span> diário, semanal e mensal. Cada um possui seu próprio peso e bônus.</div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">2. Metas batidas por período:</span> mínimo entre (assinados ÷ peso_assinados) e (ganhos ÷ peso_ganhos). <span className="text-blue-600 font-bold"></span></div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">3. Comissão total:</span> soma das comissões dos três períodos (cada uma = metas_batidas × bônus_do_período).</div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">4. Hierarquia:</span> supervisores somam os pesos de sua equipe; coordenadores/administrativos somam todos os ativos.</div>
+            </div>
+          </div>
+        </>
+      )}
+    </DashboardLayout>
+  );
+}

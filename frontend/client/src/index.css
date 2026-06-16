@@ -1,0 +1,341 @@
+/*
+ * MADM Brasil — Design System
+ * Philosophy: Precision SaaS (HubSpot clarity × Stripe sophistication)
+ * Font: Plus Jakarta Sans
+ * Background: White (#ffffff) absolute
+ * Primary: #09175b | Success: #34a853 | Ice: #c8eaed | Emerald: #045b5b | Gold: #ffcc00
+ */
+
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@custom-variant dark (&:is(.dark *));
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  /* MADM Brand Colors */
+  --color-madm-blue: #09175b;
+  --color-madm-green: #34a853;
+  --color-madm-ice: #c8eaed;
+  --color-madm-emerald: #045b5b;
+  --color-madm-gold: #ffcc00;
+}
+
+:root {
+  --radius: 0.5rem;
+
+  /* MADM Brand */
+  --madm-blue: #09175b;
+  --madm-green: #34a853;
+  --madm-ice: #c8eaed;
+  --madm-emerald: #045b5b;
+  --madm-gold: #ffcc00;
+
+  /* Theme */
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.15 0.02 260);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.15 0.02 260);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.15 0.02 260);
+
+  /* Primary = MADM Blue #09175b */
+  --primary: oklch(0.25 0.12 265);
+  --primary-foreground: oklch(1 0 0);
+
+  /* Secondary = light ice */
+  --secondary: oklch(0.96 0.015 200);
+  --secondary-foreground: oklch(0.25 0.12 265);
+
+  --muted: oklch(0.97 0.005 260);
+  --muted-foreground: oklch(0.55 0.02 260);
+
+  --accent: oklch(0.94 0.02 200);
+  --accent-foreground: oklch(0.25 0.12 265);
+
+  --destructive: oklch(0.577 0.245 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+
+  --border: oklch(0.92 0.005 260);
+  --input: oklch(0.92 0.005 260);
+  --ring: oklch(0.25 0.12 265);
+
+  /* Charts */
+  --chart-1: oklch(0.55 0.18 145);
+  --chart-2: oklch(0.25 0.12 265);
+  --chart-3: oklch(0.82 0.18 85);
+  --chart-4: oklch(0.45 0.15 200);
+  --chart-5: oklch(0.65 0.22 27);
+
+  /* Sidebar = MADM Blue */
+  --sidebar: oklch(0.25 0.12 265);
+  --sidebar-foreground: oklch(0.95 0.01 260);
+  --sidebar-primary: oklch(0.55 0.18 145);
+  --sidebar-primary-foreground: oklch(0.15 0.05 260);
+  --sidebar-accent: oklch(0.32 0.12 265);
+  --sidebar-accent-foreground: oklch(0.95 0.01 260);
+  --sidebar-border: oklch(0.32 0.1 265);
+  --sidebar-ring: oklch(0.55 0.18 145);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  body {
+    @apply bg-background text-foreground;
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [type="button"]:not(:disabled),
+  [type="submit"]:not(:disabled),
+  [type="reset"]:not(:disabled),
+  a[href],
+  select:not(:disabled),
+  input[type="checkbox"]:not(:disabled),
+  input[type="radio"]:not(:disabled) {
+    @apply cursor-pointer;
+  }
+}
+
+@layer components {
+  .container {
+    width: 100%;
+    margin-left: auto;
+    margin-right: auto;
+    padding-left: 1rem;
+    padding-right: 1rem;
+  }
+
+  .flex {
+    min-height: 0;
+    min-width: 0;
+  }
+
+  @media (min-width: 640px) {
+    .container {
+      padding-left: 1.5rem;
+      padding-right: 1.5rem;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .container {
+      padding-left: 2rem;
+      padding-right: 2rem;
+      max-width: 1280px;
+    }
+  }
+
+  /* MADM Custom Components */
+  .madm-card {
+    @apply bg-white rounded-xl border border-border shadow-sm;
+    box-shadow: 0 1px 3px rgba(9, 23, 91, 0.06), 0 1px 2px rgba(9, 23, 91, 0.04);
+    transition: box-shadow 0.2s ease, transform 0.2s ease;
+  }
+
+  .madm-card:hover {
+    box-shadow: 0 4px 12px rgba(9, 23, 91, 0.1), 0 2px 4px rgba(9, 23, 91, 0.06);
+    transform: translateY(-1px);
+  }
+
+  .madm-kpi-value {
+    font-family: 'Plus Jakarta Sans', sans-serif;
+    font-weight: 800;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+  }
+
+  .madm-gold-badge {
+    background: linear-gradient(135deg, #ffcc00, #f5a623);
+    color: #09175b;
+    font-weight: 700;
+  }
+
+  .madm-progress-bar {
+    height: 8px;
+    border-radius: 999px;
+    background: oklch(0.94 0.02 200);
+    overflow: hidden;
+  }
+
+  .madm-progress-fill {
+    height: 100%;
+    border-radius: 999px;
+    background: linear-gradient(90deg, #09175b, #34a853);
+    transition: width 1s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  .madm-sidebar-item {
+    @apply flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm font-medium transition-all duration-150;
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .madm-sidebar-item:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: white;
+  }
+
+  .madm-sidebar-item.active {
+    background: rgba(52, 168, 83, 0.15) !important;
+    color: #34a853 !important;
+    border-left: 3px solid #34a853 !important;
+    padding-left: calc(0.75rem - 3px);
+  }
+
+  .madm-insight-card {
+    @apply rounded-xl p-4 border-l-4;
+  }
+
+  .madm-insight-card.warning {
+    background: #fffbeb;
+    border-left-color: #ffcc00;
+  }
+
+  .madm-insight-card.danger {
+    background: #fef2f2;
+    border-left-color: #ef4444;
+  }
+
+  .madm-insight-card.success {
+    background: #f0fdf4;
+    border-left-color: #34a853;
+  }
+
+  .madm-insight-card.info {
+    background: #eff6ff;
+    border-left-color: #09175b;
+  }
+
+  /* Funnel Stage */
+  .funnel-stage {
+    @apply relative flex flex-col items-center;
+  }
+
+  /* Rank badge */
+  .rank-1 { background: linear-gradient(135deg, #ffcc00, #f5a623); color: #09175b; }
+  .rank-2 { background: linear-gradient(135deg, #e2e8f0, #cbd5e1); color: #334155; }
+  .rank-3 { background: linear-gradient(135deg, #d97706, #b45309); color: white; }
+
+  /* CountUp animation */
+  @keyframes countUp {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-count-up {
+    animation: countUp 0.6s ease-out forwards;
+  }
+
+  /* Stagger animations */
+  @keyframes fadeInUp {
+    from { opacity: 0; transform: translateY(16px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  .animate-fade-in-up {
+    animation: fadeInUp 0.5s ease-out forwards;
+  }
+
+  .stagger-1 { animation-delay: 50ms; }
+  .stagger-2 { animation-delay: 100ms; }
+  .stagger-3 { animation-delay: 150ms; }
+  .stagger-4 { animation-delay: 200ms; }
+  .stagger-5 { animation-delay: 250ms; }
+  .stagger-6 { animation-delay: 300ms; }
+
+  /* Goal arc */
+  .goal-arc-track {
+    stroke: #e8eaed;
+    stroke-width: 10;
+    fill: none;
+  }
+
+  .goal-arc-fill {
+    stroke-width: 10;
+    fill: none;
+    stroke-linecap: round;
+    transition: stroke-dashoffset 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+  }
+
+  /* Mobile bottom nav */
+  .mobile-nav {
+    @apply fixed bottom-0 left-0 right-0 bg-white border-t border-border;
+    padding-bottom: env(safe-area-inset-bottom);
+    z-index: 50;
+  }
+}
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: oklch(0.85 0.005 260);
+  border-radius: 999px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: oklch(0.7 0.01 260);
+}
+
+/* Custom scrollbar for commission list */
+.custom-scrollbar::-webkit-scrollbar {
+  width: 6px;
+}
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: #f1f5f9;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: #cbd5e1;
+  border-radius: 10px;
+}
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: #94a3b8;
+}

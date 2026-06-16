@@ -1,0 +1,272 @@
+/*
+ * Login — MADM Brasil
+ * Autenticação com verificação de dois fatores (2FA) via e-mail
+ */
+
+import { useState } from "react";
+import { useLocation } from "wouter";
+import { Eye, EyeOff, Shield, Mail, Lock, RefreshCw } from "lucide-react";
+import { cn } from "@/lib/utils";
+import logoImg from "../components/img/logo.png";
+import { login, verify2FA, resendCode } from "@/lib/auth";
+import { useAppStore } from "@/lib/dataStore";
+
+export default function Login() {
+  const [step, setStep] = useState<"credentials" | "2fa">("credentials");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [twoFactorCode, setTwoFactorCode] = useState("");
+  const [showPassword, setShowPassword] = useState(false);
+  const [error, setError] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+  const [tempToken, setTempToken] = useState<string | null>(null);
+  const [, setLocation] = useLocation();
+
+  // Ações do store
+  const setCurrentUser = useAppStore((state) => state.setCurrentUser);
+
+  // Envia credenciais
+  const handleCredentialsSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
+
+    try {
+      const data = await login(email, password);
+      if (data.requiresTwoFactor) {
+        setTempToken(data.tempToken);
+        setStep("2fa");
+      } else {
+        // Caso não exija 2FA (improvável, mas mantido)
+        localStorage.setItem("accessToken", data.accessToken);
+        if (data.user) {
+          setCurrentUser(data.user);
+        }
+        setLocation("/");
+      }
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  // Verifica código 2FA e redireciona
+  const handleTwoFactorSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setIsLoading(true);
+
+    if (!tempToken) {
+      setError("Sessão expirada. Faça login novamente.");
+      setStep("credentials");
+      setIsLoading(false);
+      return;
+    }
+
+    try {
+      // verify2FA já chama loadCollaborators() internamente (definido em auth.ts)
+      const data = await verify2FA(tempToken, twoFactorCode);
+      
+      localStorage.setItem("accessToken", data.accessToken);
+      
+      if (data.user) {
+        setCurrentUser(data.user);
+      }
+
+      // Redireciona para o dashboard — o DashboardLayout carregará o restante se necessário
+      setLocation("/");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleResendCode = async () => {
+    if (!tempToken) {
+      setError("Sessão inválida. Tente novamente.");
+      setStep("credentials");
+      return;
+    }
+    setIsLoading(true);
+    setError("");
+    try {
+      await resendCode();
+      alert("Novo código enviado para seu e-mail.");
+    } catch (err: any) {
+      setError(err.message);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-[#f8f9fc] flex items-center justify-center p-6">
+      <div className="w-full max-w-md">
+        {/* Logo / Brand */}
+        <div className="text-center mb-8">
+          <div className="w-24 h-24 mx-auto mb-4">
+            <img src={logoImg} alt="MADM Brasil" className="w-full h-full object-cover rounded-2xl shadow-md" />
+          </div>
+          <h1 className="text-2xl font-black text-[#09175b]">MADM Brasil</h1>
+        </div>
+
+        <div className="bg-white rounded-2xl shadow-lg overflow-hidden">
+          <div className="px-6 pt-6 pb-2">
+            <h2 className="text-xl font-bold text-gray-800">
+              {step === "credentials" ? "Acesse sua conta" : "Verificação em duas etapas"}
+            </h2>
+            <p className="text-sm text-gray-500 mt-1">
+              {step === "credentials"
+                ? "Insira suas credenciais para continuar"
+                : "Digite o código de 6 dígitos enviado para seu e-mail"}
+            </p>
+          </div>
+
+          <div className="p-6">
+            {step === "credentials" ? (
+              <form onSubmit={handleCredentialsSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="email" className="block text-xs font-semibold text-gray-600 mb-1">
+                    E-mail
+                  </label>
+                  <div className="relative">
+                    <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      id="email"
+                      type="email"
+                      value={email}
+                      onChange={(e) => setEmail(e.target.value)}
+                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
+                      placeholder="seu@madmbrasil.com"
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="password" className="block text-xs font-semibold text-gray-600 mb-1">
+                    Senha
+                  </label>
+                  <div className="relative">
+                    <Lock className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      id="password"
+                      type={showPassword ? "text" : "password"}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      className="w-full pl-9 pr-10 py-2 text-sm rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
+                      placeholder="••••••••"
+                      required
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowPassword(!showPassword)}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                    >
+                      {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                    </button>
+                  </div>
+                </div>
+
+                {error && <p className="text-red-500 text-xs">{error}</p>}
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className={cn(
+                    "w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all",
+                    isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-[#09175b] hover:opacity-90"
+                  )}
+                >
+                  {isLoading ? "Entrando..." : "Entrar"}
+                </button>
+
+                <div className="text-center">
+                  <p className="text-[13px] text-gray-500">
+                    Esqueceu a senha?{" "}
+                    <a
+                      href="#"
+                      onClick={(e) => {
+                        e.preventDefault();
+                        setLocation("/forgot-password");
+                      }}
+                      className="text-[#09175b] hover:underline font-medium"
+                    >
+                      Clique aqui
+                    </a>
+                  </p>
+                </div>
+              </form>
+            ) : (
+              <form onSubmit={handleTwoFactorSubmit} className="space-y-4">
+                <div>
+                  <label htmlFor="2fa-code" className="block text-xs font-semibold text-gray-600 mb-1">
+                    Código de verificação
+                  </label>
+                  <div className="relative">
+                    <Shield className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <input
+                      id="2fa-code"
+                      type="text"
+                      inputMode="numeric"
+                      maxLength={6}
+                      value={twoFactorCode}
+                      onChange={(e) => setTwoFactorCode(e.target.value.replace(/\D/g, ""))}
+                      className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
+                      placeholder="000000"
+                      required
+                    />
+                  </div>
+                  <p className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
+                    <Mail className="w-3 h-3" />
+                    Enviamos um código para o e-mail cadastrado.
+                  </p>
+                </div>
+
+                {error && <p className="text-red-500 text-xs">{error}</p>}
+
+                <button
+                  type="submit"
+                  disabled={isLoading}
+                  className={cn(
+                    "w-full py-2.5 rounded-lg text-sm font-semibold text-white transition-all",
+                    isLoading ? "bg-gray-400 cursor-not-allowed" : "bg-[#09175b] hover:opacity-90"
+                  )}
+                >
+                  {isLoading ? "Verificando..." : "Verificar código"}
+                </button>
+
+                <div className="flex justify-between items-center">
+                  <button
+                    type="button"
+                    onClick={() => setStep("credentials")}
+                    className="text-xs text-gray-500 hover:text-[#09175b] transition-colors"
+                  >
+                    ← Voltar ao login
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleResendCode}
+                    disabled={isLoading}
+                    className="text-xs text-[#09175b] hover:underline flex items-center gap-1"
+                  >
+                    <RefreshCw className="w-3 h-3" />
+                    Reenviar código
+                  </button>
+                </div>
+              </form>
+            )}
+          </div>
+
+          <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 text-center">
+            <p className="text-[10px] text-gray-400">
+              Sistema seguro com autenticação de dois fatores por e-mail.
+            </p>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
