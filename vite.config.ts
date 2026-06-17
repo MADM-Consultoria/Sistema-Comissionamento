@@ -5,7 +5,7 @@ import path from "node:path";
 import { defineConfig } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
-const __dirname = import.meta.dirname; // ou use path.dirname(fileURLToPath(import.meta.url))
+const __dirname = import.meta.dirname;
 
 export default defineConfig({
   plugins: [
@@ -22,7 +22,7 @@ export default defineConfig({
     },
   },
   envDir: path.resolve(__dirname),
-  root: path.resolve(__dirname, "frontend/client"), // <-- CORRIGIDO
+  root: path.resolve(__dirname, "frontend/client"), 
   build: {
     outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
