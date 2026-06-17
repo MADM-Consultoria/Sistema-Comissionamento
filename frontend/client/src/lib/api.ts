@@ -1,5 +1,5 @@
 // src/lib/api.ts
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3007';;
+export const API_BASE = import.meta.env.VITE_API_URL || '/api';;
 
 // ==================== FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS ====================
 async function handleResponse(response: Response, defaultErrorMessage: string) {
