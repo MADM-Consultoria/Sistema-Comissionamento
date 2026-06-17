@@ -330,7 +330,7 @@ const initialGlobalConfig: GlobalConfig = {
   pesoMetaGanhos: 60,
   pesoMetaequipeAssinados: 0,
   pesoMetaequipeGanhos: 0,
-  valorBonus: 150,
+  valorBonus: 100,
   metaDiaria: 3,
   metaSemanal: 15,
   metaMensal: 60,
@@ -639,7 +639,7 @@ export const useAppStore = create<AppStore>()(
             perdidos: 0,
             metaAssinados: c.metaAssinados || 3,
             metaGanhos: c.metaGanhos || 3,
-            bonusPorCiclo: c.bonusPorCiclo || 150,
+            bonusPorCiclo: c.bonusPorCiclo || 100,
             bonusRecebido: c.bonusRecebido || 0,
             status: (c.status || 'ativo').toLowerCase() as "ativo" | "inativo",
             produto: c.produto || '',
@@ -707,7 +707,7 @@ export const useAppStore = create<AppStore>()(
       loadEquipeConfigs: async () => {
         try {
           const equipes: any[] = await fetchEquipes();
-          set({ equipeConfigs: equipes.map((eq: any) => ({ id: eq.id?.toString() || `equipe_${Math.random()}`, nome: eq.nome || 'Equipe sem nome', pesoAssinados: 3, pesoGanhos: 3, pesoequipeAssinados: 0, pesoequipeGanhos: 0, bonus: 150 })) });
+          set({ equipeConfigs: equipes.map((eq: any) => ({ id: eq.id?.toString() || `equipe_${Math.random()}`, nome: eq.nome || 'Equipe sem nome', pesoAssinados: 3, pesoGanhos: 3, pesoequipeAssinados: 0, pesoequipeGanhos: 0, bonus: 100 })) });
         } catch (err) { console.error('Erro ao carregar configurações de equipe:', err); }
       },
 
@@ -783,7 +783,7 @@ export const useAppStore = create<AppStore>()(
         const totalEmi = collaborators.reduce((s, c) => s + (Number(c.emitidos) || 0), 0);
         const taxa = totalEmi > 0 ? (totalAss / totalEmi) * 100 : 0;
         const metaBatida = Math.floor(Math.min(totalAss / (globalConfig.pesoMetaAssinados || 3), totalGanhos / (globalConfig.pesoMetaGanhos || 3)));
-        const comissao = metaBatida * (globalConfig.valorBonus || 150);
+        const comissao = metaBatida * (globalConfig.valorBonus || 100);
         set((s) => ({
           kpiData: {
             ...s.kpiData,
@@ -927,7 +927,7 @@ export const useAppStore = create<AppStore>()(
         const totalEmi = rawMetrics.emitidos;
         const taxa = totalEmi > 0 ? (totalAss / totalEmi) * 100 : 0;
         const metaBatida = Math.floor(Math.min(totalAss / (globalConfig.pesoMetaAssinados || 3), totalGan / (globalConfig.pesoMetaGanhos || 3)));
-        const comissao = metaBatida * (globalConfig.valorBonus || 150);
+        const comissao = metaBatida * (globalConfig.valorBonus || 100);
         set((s) => ({
           kpiData: {
             ...s.kpiData,
