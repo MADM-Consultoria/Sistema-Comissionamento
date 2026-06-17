@@ -5,7 +5,7 @@
   "license": "MIT",
   "scripts": {
     "dev": "vite --host",
-    "build": "vite build && esbuild frontend/server/index.ts --platform=node --bundle --format=esm --outdir=dist",
+    "build": "vite build && esbuild frontend/server/index.ts --platform=node --bundle --format=cjs --outdir=dist",
     "start": "NODE_ENV=production node dist/index.js",
     "preview": "vite preview --host",
     "check": "tsc --noEmit",
@@ -85,7 +85,7 @@
     "@types/express-session": "^1.19.0",
     "@types/google.maps": "^3.58.1",
     "@types/helmet": "^0.0.48",
-    "@types/node": "^24.7.0",
+    "@types/node": "^24.13.2",
     "@types/pg": "^8.20.0",
     "@types/react": "^19.2.1",
     "@types/react-dom": "^19.2.1",
