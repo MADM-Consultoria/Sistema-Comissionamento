@@ -5,32 +5,31 @@ import path from "node:path";
 import { defineConfig } from "vite";
 import { vitePluginManusRuntime } from "vite-plugin-manus-runtime";
 
-const plugins = [
-  react(),
-  tailwindcss(),
-  jsxLocPlugin(),
-  vitePluginManusRuntime(),
-];
+const __dirname = import.meta.dirname; // ou use path.dirname(fileURLToPath(import.meta.url))
 
 export default defineConfig({
-  plugins,
+  plugins: [
+    react(),
+    tailwindcss(),
+    jsxLocPlugin(),
+    vitePluginManusRuntime(),
+  ],
   resolve: {
     alias: {
-      "@": path.resolve(import.meta.dirname, "client/src"),
-      "@shared": path.resolve(import.meta.dirname, "shared"),
-      "@assets": path.resolve(import.meta.dirname, "attached_assets"),
+      "@": path.resolve(__dirname, "frontend/client/src"),
+      "@shared": path.resolve(__dirname, "shared"),
+      "@assets": path.resolve(__dirname, "attached_assets"),
     },
   },
-  envDir: path.resolve(import.meta.dirname),
-  // Remova a opção 'root' completamente
+  envDir: path.resolve(__dirname),
+  root: path.resolve(__dirname, "frontend/client"), // <-- CORRIGIDO
   build: {
-    outDir: path.resolve(import.meta.dirname, "dist/public"),
+    outDir: path.resolve(__dirname, "dist/public"),
     emptyOutDir: true,
     minify: 'esbuild',
     sourcemap: false,
     target: 'esnext',
     rollupOptions: {
-      input: path.resolve(import.meta.dirname, "client/index.html"), // <-- explícito
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom'],
