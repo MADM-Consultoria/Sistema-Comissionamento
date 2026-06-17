@@ -98,14 +98,14 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>
-      {/* NOVA ROTA SUPORTE */}
+      {/* NOVA ROTA SUPORTE 
       <Route path="/suporte">
         <PeriodProvider>
           <ProtectedRoute>
             <Suporte />
           </ProtectedRoute>
         </PeriodProvider>
-      </Route>
+      </Route>*/}
       {/* Fallback */}
       <Route component={NotFound} />
     </Switch>
