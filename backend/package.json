@@ -4,6 +4,7 @@
   "type": "module",
   "description": "",
   "main": "main.js",
+  "dev-server": "tsx watch server/index.ts",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "start": "node server.js"
