@@ -179,6 +179,8 @@ export default defineConfig({
       ".manusvm.computer",
       "localhost",
       "127.0.0.1",
+      // 🔥 Permite qualquer subdomínio do Cloudflare Tunnel
+      ".trycloudflare.com",
     ],
     fs: {
       strict: true,
