@@ -1,6 +1,7 @@
 // backend/services/twoFactorService.js
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import dns from 'dns';
 
 class TwoFactorService {
     constructor() {
@@ -10,6 +11,19 @@ class TwoFactorService {
         const hasEmailConfig = process.env.EMAIL_USER && process.env.EMAIL_PASS;
         if (hasEmailConfig) {
             try {
+                // Força a resolução de DNS para IPv4 usando lookup customizado
+                const customLookup = (hostname, options, callback) => {
+                    // Força IPv4
+                    dns.lookup(hostname, { family: 4 }, (err, address, family) => {
+                        if (err) {
+                            console.error('❌ [DNS] Erro ao resolver hostname:', err);
+                            return callback(err, null, null);
+                        }
+                        console.log(`📡 [DNS] Resolvido ${hostname} -> ${address} (IPv4)`);
+                        callback(null, address, family);
+                    });
+                };
+
                 this.transporter = nodemailer.createTransport({
                     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
                     port: parseInt(process.env.EMAIL_PORT) || 587,
@@ -24,9 +38,9 @@ class TwoFactorService {
                     connectionTimeout: 15000,
                     greetingTimeout: 15000,
                     socketTimeout: 15000,
-                    family: 4, // 👈 FORÇA IPv4 – resolve o ENETUNREACH
+                    lookup: customLookup, // 👈 FORÇA IPv4 no DNS
                 });
-                console.log('📧 [2FA] Transporter SMTP configurado (IPv4 forçado).');
+                console.log('📧 [2FA] Transporter SMTP configurado com lookup IPv4.');
             } catch (err) {
                 console.error('❌ [2FA] Erro ao criar transporter:', err.message);
                 this.transporter = null;
@@ -80,7 +94,7 @@ class TwoFactorService {
             return { success: true, code };
         } catch (error) {
             console.error(`❌ [2FA] Erro ao enviar e-mail: ${error.message}`);
-            // Fallback para porta 465 com SSL (também com IPv4)
+            // Fallback para porta 465 com SSL, também com lookup IPv4
             if (error.message.includes('timeout') || error.message.includes('connection') || error.message.includes('ENETUNREACH')) {
                 console.log('🔄 [2FA] Tentando fallback com porta 465/SSL...');
                 try {
@@ -94,7 +108,7 @@ class TwoFactorService {
                         },
                         tls: { rejectUnauthorized: false },
                         connectionTimeout: 15000,
-                        family: 4, // também força IPv4
+                        lookup: customLookup, // também força IPv4
                     });
                     await fallbackTransporter.sendMail({
                         from: `"MADM System" <${process.env.EMAIL_USER}>`,
