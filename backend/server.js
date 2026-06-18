@@ -15,16 +15,27 @@ import csrfLib from 'csrf';
 const app = express();
 const PORT = process.env.PORT || 3007;
 
+app.set('trust proxy', 1);
+
 // 1. CORS
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
-app.use(cors({ origin: allowedOrigins, credentials: true }));
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,
+}));
 
 // 2. Sessão
+const isProduction = process.env.NODE_ENV === 'production';
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'chave-secreta',
-    resave: false,
-    saveUninitialized: true,
-    cookie: { secure: false, httpOnly: true, maxAge: 24 * 60 * 60 * 1000 }
+  secret: process.env.SESSION_SECRET,
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: isProduction ? 'none' : 'lax',
+    maxAge: 24 * 60 * 60 * 1000,
+  },
 }));
 
 // 3. Body parsers (com limite)
@@ -197,7 +208,9 @@ app.post('/api/commission/recalculate-hierarchy', async (req, res) => {
 });
 
 // Health check e ping (públicos)
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() });
+});
 app.get('/api/ping', (req, res) => res.json({ pong: true, time: new Date().toISOString() }));
 
 // Fallback 404
@@ -223,4 +236,4 @@ async function startServer() {
 }
 startServer();
 
-export { app, dbService };
+export { app, dbService }; 
