@@ -1,5 +1,5 @@
 // src/lib/api.ts
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3007/api';
+export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3007';
 
 // ==================== FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS ====================
 async function handleResponse(response: Response, defaultErrorMessage: string) {
@@ -192,4 +192,4 @@ export function getDateRangeFromPeriod(periodo: string): { start: string; end: s
     start: start.toISOString().slice(0, 10),
     end: end.toISOString().slice(0, 10),
   };
-}
+} 
