@@ -7,26 +7,26 @@ class TwoFactorService {
         this.codes = new Map();
         this.resetCodes = new Map();
 
-        // Configuração robusta para Gmail
         const hasEmailConfig = process.env.EMAIL_USER && process.env.EMAIL_PASS;
         if (hasEmailConfig) {
             try {
                 this.transporter = nodemailer.createTransport({
                     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
                     port: parseInt(process.env.EMAIL_PORT) || 587,
-                    secure: false, // true para 465, false para 587
+                    secure: false,
                     auth: {
                         user: process.env.EMAIL_USER,
                         pass: process.env.EMAIL_PASS,
                     },
                     tls: {
-                        rejectUnauthorized: false, // necessário para Render
+                        rejectUnauthorized: false,
                     },
-                    connectionTimeout: 15000, // 15 segundos
+                    connectionTimeout: 15000,
                     greetingTimeout: 15000,
                     socketTimeout: 15000,
+                    family: 4, // 👈 FORÇA IPv4 – resolve o ENETUNREACH
                 });
-                console.log('📧 [2FA] Transporter SMTP configurado.');
+                console.log('📧 [2FA] Transporter SMTP configurado (IPv4 forçado).');
             } catch (err) {
                 console.error('❌ [2FA] Erro ao criar transporter:', err.message);
                 this.transporter = null;
@@ -43,7 +43,6 @@ class TwoFactorService {
         return crypto.randomInt(100000, 999999).toString();
     }
 
-    // ===== Envio de código 2FA com retry e fallback =====
     async sendCode(to, identifier, subject = 'Seu código de verificação', templateFn = null) {
         const code = this.generateCode();
         const expires = Date.now() + 5 * 60 * 1000;
@@ -52,7 +51,7 @@ class TwoFactorService {
         console.log(`🔑 [2FA] Código gerado para ${identifier}: ${code}`);
 
         if (!this.transporter) {
-            console.error('❌ [2FA] Transporter não configurado. Envie e-mail manualmente.');
+            console.error('❌ [2FA] Transporter não configurado.');
             return { success: false, error: 'SMTP não configurado' };
         }
 
@@ -81,9 +80,8 @@ class TwoFactorService {
             return { success: true, code };
         } catch (error) {
             console.error(`❌ [2FA] Erro ao enviar e-mail: ${error.message}`);
-
-            // Tenta uma segunda vez com fallback (porta 465/SSL)
-            if (error.message.includes('timeout') || error.message.includes('connection')) {
+            // Fallback para porta 465 com SSL (também com IPv4)
+            if (error.message.includes('timeout') || error.message.includes('connection') || error.message.includes('ENETUNREACH')) {
                 console.log('🔄 [2FA] Tentando fallback com porta 465/SSL...');
                 try {
                     const fallbackTransporter = nodemailer.createTransport({
@@ -96,6 +94,7 @@ class TwoFactorService {
                         },
                         tls: { rejectUnauthorized: false },
                         connectionTimeout: 15000,
+                        family: 4, // também força IPv4
                     });
                     await fallbackTransporter.sendMail({
                         from: `"MADM System" <${process.env.EMAIL_USER}>`,
@@ -103,7 +102,7 @@ class TwoFactorService {
                         subject,
                         html,
                     });
-                    console.log(`✅ [2FA] E-mail enviado via fallback para ${to}`);
+                    console.log(`✅ [2FA] E-mail enviado via fallback (465/SSL) para ${to}`);
                     return { success: true, code };
                 } catch (fallbackError) {
                     console.error(`❌ [2FA] Fallback também falhou: ${fallbackError.message}`);
@@ -138,7 +137,6 @@ class TwoFactorService {
         return await this.sendCode(email, identifier);
     }
 
-    // ===== Recuperação de senha =====
     async sendPasswordResetCode(email, userId) {
         const code = this.generateCode();
         const expires = Date.now() + 5 * 60 * 1000;
