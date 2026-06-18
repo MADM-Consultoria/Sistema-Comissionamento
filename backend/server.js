@@ -4,7 +4,7 @@ import session from 'express-session';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-import csrfLib from 'csrf';
+//import csrfLib from 'csrf';
 import { PostgresService } from './Postgree-Service.js';
 
 // Importação das rotas com log
@@ -65,14 +65,14 @@ app.use(helmet({
 }));
 
 // ---------- CSRF ----------
-const tokens = new csrfLib();
-app.use((req, res, next) => {
-  if (!req.session.csrfSecret) {
-    req.session.csrfSecret = tokens.secretSync();
-  }
-  req.csrfToken = () => tokens.create(req.session.csrfSecret);
-  next();
-});
+//const tokens = new csrfLib();
+//app.use((req, res, next) => {
+//  if (!req.session.csrfSecret) {
+//    req.session.csrfSecret = tokens.secretSync();
+//  }
+//  req.csrfToken = () => tokens.create(req.session.csrfSecret);
+//  next();
+//});
 
 // ============================================================
 // ROTA DE TESTE INLINE (para diagnóstico)

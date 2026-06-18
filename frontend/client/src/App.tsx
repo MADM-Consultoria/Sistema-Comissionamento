@@ -20,21 +20,20 @@ import Verify2FA from "./pages/ResetPassword/Verify2FA";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ForgotPassword from "./pages/ResetPassword/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword/ResetPassword";
-import Suporte from "./pages/Suporte";
 import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
 
 function Router() {
   return (
     <Switch>
-      {/* Rotas públicas que NÃO usam período (login, recuperação) */}
+      {/* Rotas públicas */}
       <Route path="/login" component={Login} />
       <Route path="/verify-2fa" component={Verify2FA} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/404" component={NotFound} />
 
-      {/* Rotas protegidas (todas usam período) – envoltas em PeriodProvider */}
+      {/* Rotas protegidas */}
       <Route path="/">
         <PeriodProvider>
           <ProtectedRoute>
@@ -91,14 +90,7 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>
-      <Route path="/relatorio">
-        <PeriodProvider>
-          <ProtectedRoute>
-            <Relatorio />
-          </ProtectedRoute>
-        </PeriodProvider>
-      </Route>
-      {/* NOVA ROTA SUPORTE 
+          {/* ROTA EM DESENVOLVIMENTO
       <Route path="/suporte">
         <PeriodProvider>
           <ProtectedRoute>
@@ -107,6 +99,13 @@ function Router() {
         </PeriodProvider>
       </Route>*/}
       {/* Fallback */}
+      <Route path="/relatorio">
+        <PeriodProvider>
+          <ProtectedRoute>
+            <Relatorio />
+          </ProtectedRoute>
+        </PeriodProvider>
+      </Route>
       <Route component={NotFound} />
     </Switch>
   );
@@ -115,18 +114,41 @@ function Router() {
 function App() {
   const { currentUser } = useAppStore();
 
-  // ========== OBTER TOKEN CSRF APÓS LOGIN ==========
+  // ===== Buscar token CSRF ao montar (necessário para login) =====
   useEffect(() => {
-    if (currentUser) {
-      fetch(`${API_BASE}/csrf-token`, { credentials: 'include' })
-        .then(res => res.json())
-        .then(data => {
-          if (data.csrfToken && data.csrfToken !== 'disabled') {
-            localStorage.setItem('csrfToken', data.csrfToken);
-          }
-        })
-        .catch(err => console.error('Erro ao obter token CSRF:', err));
-    }
+    const fetchCsrfToken = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.csrfToken && data.csrfToken !== 'disabled') {
+          localStorage.setItem('csrfToken', data.csrfToken);
+        }
+      } catch (err) {
+        // Falha silenciosa – o token não é crítico se o backend não exigir
+        console.warn('Não foi possível obter token CSRF:', err);
+      }
+    };
+
+    fetchCsrfToken();
+  }, []);
+
+  // ===== Atualizar token após login (opcional, mas seguro) =====
+  useEffect(() => {
+    if (!currentUser) return;
+
+    const refreshCsrfToken = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.csrfToken && data.csrfToken !== 'disabled') {
+          localStorage.setItem('csrfToken', data.csrfToken);
+        }
+      } catch (err) {
+        console.error('Erro ao atualizar token CSRF:', err);
+      }
+    };
+
+    refreshCsrfToken();
   }, [currentUser]);
 
   return (
