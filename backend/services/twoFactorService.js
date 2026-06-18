@@ -1,6 +1,10 @@
 // backend/services/twoFactorService.js
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
+import dns from 'dns';
+import { promisify } from 'util';
+
+const lookup = promisify(dns.lookup);
 
 class TwoFactorService {
     constructor() {
@@ -10,6 +14,18 @@ class TwoFactorService {
         const hasEmailConfig = process.env.EMAIL_USER && process.env.EMAIL_PASS;
         if (hasEmailConfig) {
             try {
+                // Cria um customLookup que força IPv4
+                const customLookup = (hostname, options, callback) => {
+                    // Força a família 4
+                    lookup(hostname, { family: 4 })
+                        .then(result => {
+                            callback(null, result.address, 4);
+                        })
+                        .catch(err => {
+                            callback(err);
+                        });
+                };
+
                 this.transporter = nodemailer.createTransport({
                     host: process.env.EMAIL_HOST || 'smtp.gmail.com',
                     port: parseInt(process.env.EMAIL_PORT) || 587,
@@ -21,15 +37,13 @@ class TwoFactorService {
                     tls: {
                         rejectUnauthorized: false,
                     },
-                    connectionTimeout: 15000,
-                    greetingTimeout: 15000,
-                    socketTimeout: 15000,
-                    // Força IPv4 – sintaxe correta
-                    dns: {
-                        family: 4
-                    }
+                    connectionTimeout: 30000, // 30 segundos
+                    greetingTimeout: 30000,
+                    socketTimeout: 30000,
+                    // Força IPv4 com lookup customizado
+                    lookup: customLookup,
                 });
-                console.log('📧 [2FA] Transporter SMTP configurado (IPv4 forçado).');
+                console.log('📧 [2FA] Transporter SMTP configurado (IPv4 forçado via lookup).');
             } catch (err) {
                 console.error('❌ [2FA] Erro ao criar transporter:', err.message);
                 this.transporter = null;
@@ -84,10 +98,16 @@ class TwoFactorService {
         } catch (error) {
             console.error(`❌ [2FA] Erro ao enviar e-mail: ${error.message}`);
 
-            // Fallback para porta 465 com SSL
+            // Fallback para porta 465 com SSL (também com customLookup)
             if (error.message.includes('timeout') || error.message.includes('connection') || error.message.includes('ENETUNREACH')) {
                 console.log('🔄 [2FA] Tentando fallback com porta 465/SSL...');
                 try {
+                    const customLookupFallback = (hostname, options, callback) => {
+                        lookup(hostname, { family: 4 })
+                            .then(result => callback(null, result.address, 4))
+                            .catch(err => callback(err));
+                    };
+
                     const fallbackTransporter = nodemailer.createTransport({
                         host: process.env.EMAIL_HOST || 'smtp.gmail.com',
                         port: 465,
@@ -97,8 +117,8 @@ class TwoFactorService {
                             pass: process.env.EMAIL_PASS,
                         },
                         tls: { rejectUnauthorized: false },
-                        connectionTimeout: 15000,
-                        dns: { family: 4 } // também força IPv4
+                        connectionTimeout: 30000,
+                        lookup: customLookupFallback,
                     });
                     await fallbackTransporter.sendMail({
                         from: `"MADM System" <${process.env.EMAIL_USER}>`,
