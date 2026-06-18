@@ -1,3 +1,4 @@
+// backend/routes/auth.js
 import express from 'express';
 import bcrypt from 'bcrypt';
 import twoFactorService from '../services/twoFactorService.js';
@@ -5,8 +6,11 @@ import db from '../services/db.js';
 import crypto from 'crypto';
 
 const router = express.Router();
+console.log('✅ [AUTH] Módulo de autenticação carregado com twoFactorService real');
 
+// ============================================================
 // Função auxiliar para obter o período atual (YYYY-MM)
+// ============================================================
 function getCurrentPeriod() {
     const now = new Date();
     const year = now.getFullYear();
@@ -14,7 +18,9 @@ function getCurrentPeriod() {
     return `${year}-${month}`;
 }
 
-// ==================== AUTENTICAÇÃO ====================
+// ============================================================
+// ROTAS DE AUTENTICAÇÃO
+// ============================================================
 
 // POST /api/auth/login
 router.post('/login', async (req, res) => {
@@ -30,7 +36,6 @@ router.post('/login', async (req, res) => {
     console.log(`🔐 Tentativa de login: email=${email}, periodo=${periodo}`);
 
     try {
-        // ✅ JOIN exclusivamente por e‑mail normalizado (case‑insensitive, sem espaços)
         const result = await db.query(
           `SELECT 
               c.internal_id,
@@ -152,7 +157,9 @@ router.post('/logout', (req, res) => {
     });
 });
 
-// ==================== RECUPERAÇÃO DE SENHA ====================
+// ============================================================
+// ROTAS DE RECUPERAÇÃO DE SENHA
+// ============================================================
 
 // POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
@@ -169,7 +176,6 @@ router.post('/forgot-password', async (req, res) => {
     ];
 
     try {
-        // ✅ JOIN exclusivamente por e‑mail normalizado
         const result = await db.query(
           `SELECT 
               c.internal_id,
