@@ -12,14 +12,18 @@ class TwoFactorService {
         if (hasEmailConfig) {
             try {
                 this.transporter = nodemailer.createTransport({
-                    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-                    port: parseInt(process.env.EMAIL_PORT) || 587,
-                    secure: false,
-                    auth: {
-                        user: process.env.EMAIL_USER,
-                        pass: process.env.EMAIL_PASS,
-                    },
-                });
+                   host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+                   port: parseInt(process.env.EMAIL_PORT) || 587,
+                   secure: false, // true para 465, false para 587
+                   auth: {
+                    user: process.env.EMAIL_USER,
+                    pass: process.env.EMAIL_PASS,
+                  },
+                tls: {
+                    rejectUnauthorized: false, // importante para Render
+                },
+            connectionTimeout: 10000, // 10 segundos
+            });
                 console.log('📧 [2FA] Serviço de e-mail configurado.');
             } catch (err) {
                 console.error('❌ [2FA] Erro ao criar transporter:', err.message);
