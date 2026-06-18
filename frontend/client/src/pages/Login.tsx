@@ -3,13 +3,14 @@
  * Autenticação com verificação de dois fatores (2FA) via e-mail
  */
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useLocation } from "wouter";
 import { Eye, EyeOff, Shield, Mail, Lock, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
 import logoImg from "../components/img/logo.png";
 import { login, verify2FA, resendCode } from "@/lib/auth";
 import { useAppStore } from "@/lib/dataStore";
+import { API_BASE } from "@/lib/api";
 
 export default function Login() {
   const [step, setStep] = useState<"credentials" | "2fa">("credentials");
@@ -25,7 +26,25 @@ export default function Login() {
   // Ações do store
   const setCurrentUser = useAppStore((state) => state.setCurrentUser);
 
-  // Envia credenciais
+  // ===== Buscar token CSRF ao montar a página =====
+  useEffect(() => {
+    const fetchCsrfToken = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+        const data = await res.json();
+        if (data.csrfToken && data.csrfToken !== 'disabled') {
+          localStorage.setItem('csrfToken', data.csrfToken);
+        }
+      } catch (err) {
+        // Falha silenciosa – o token será obtido na primeira requisição
+        console.warn('Não foi possível obter token CSRF:', err);
+      }
+    };
+
+    fetchCsrfToken();
+  }, []);
+
+  // ===== Envia credenciais =====
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -45,13 +64,18 @@ export default function Login() {
         setLocation("/");
       }
     } catch (err: any) {
-      setError(err.message);
+      // Se a mensagem de erro mencionar CSRF, orienta o usuário
+      if (err.message && err.message.toLowerCase().includes('csrf')) {
+        setError('Erro de segurança. Recarregue a página e tente novamente.');
+      } else {
+        setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.');
+      }
     } finally {
       setIsLoading(false);
     }
   };
 
-  // Verifica código 2FA e redireciona
+  // ===== Verifica código 2FA =====
   const handleTwoFactorSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError("");
@@ -65,7 +89,6 @@ export default function Login() {
     }
 
     try {
-      // verify2FA já chama loadCollaborators() internamente (definido em auth.ts)
       const data = await verify2FA(tempToken, twoFactorCode);
       
       localStorage.setItem("accessToken", data.accessToken);
@@ -74,15 +97,15 @@ export default function Login() {
         setCurrentUser(data.user);
       }
 
-      // Redireciona para o dashboard — o DashboardLayout carregará o restante se necessário
       setLocation("/");
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Código inválido. Tente novamente.');
     } finally {
       setIsLoading(false);
     }
   };
 
+  // ===== Reenvia código 2FA =====
   const handleResendCode = async () => {
     if (!tempToken) {
       setError("Sessão inválida. Tente novamente.");
@@ -95,7 +118,7 @@ export default function Login() {
       await resendCode();
       alert("Novo código enviado para seu e-mail.");
     } catch (err: any) {
-      setError(err.message);
+      setError(err.message || 'Erro ao reenviar código.');
     } finally {
       setIsLoading(false);
     }

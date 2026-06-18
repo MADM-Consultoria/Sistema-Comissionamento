@@ -4,7 +4,7 @@ import session from 'express-session';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
-//import csrfLib from 'csrf';
+import csrfLib from 'csrf';
 import { PostgresService } from './Postgree-Service.js';
 
 // Importação das rotas com log
@@ -65,25 +65,16 @@ app.use(helmet({
 }));
 
 // ---------- CSRF ----------
-//const tokens = new csrfLib();
-//app.use((req, res, next) => {
-//  if (!req.session.csrfSecret) {
-//    req.session.csrfSecret = tokens.secretSync();
-//  }
-//  req.csrfToken = () => tokens.create(req.session.csrfSecret);
-//  next();
-//});
-
-// ============================================================
-// ROTA DE TESTE INLINE (para diagnóstico)
-// ============================================================
-app.post('/api/auth/login-test', (req, res) => {
-  res.json({ success: true, message: 'Rota de teste inline funcionando' });
+const tokens = new csrfLib();
+app.use((req, res, next) => {
+  if (!req.session.csrfSecret) {
+    req.session.csrfSecret = tokens.secretSync();
+  }
+  req.csrfToken = () => tokens.create(req.session.csrfSecret);
+  next();
 });
 
-// ============================================================
-// ROTAS PÚBLICAS (SEM CSRF)
-// ============================================================
+// ---------- ROTAS PÚBLICAS (sem CSRF) ----------
 app.use('/api/auth', authRouter);
 app.get('/api/csrf-token', (req, res) => {
   const token = req.csrfToken();
@@ -91,30 +82,25 @@ app.get('/api/csrf-token', (req, res) => {
   res.json({ csrfToken: token });
 });
 
-// ============================================================
-// MIDDLEWARE CSRF (para rotas POST/PUT/DELETE)
-// ============================================================
+// ---------- MIDDLEWARE DE VERIFICAÇÃO CSRF (com retorno JSON) ----------
 function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
   if (!tokens.verify(req.session.csrfSecret, token || '')) {
     console.warn('❌ CSRF inválido');
-    return res.status(403).json({ success: false, error: 'invalid csrf token' });
+    // RETORNA JSON EM VEZ DE RESPOSTA VAZIA
+    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página e tente novamente.' });
   }
   next();
 }
 app.use(csrfProtection);
 
-// ============================================================
-// ROTAS PROTEGIDAS
-// ============================================================
+// ---------- ROTAS PROTEGIDAS ----------
 app.use('/api', colaboradoresRoutes);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
 
-// ============================================================
-// ROTA RECALCULAR HIERARQUIA
-// ============================================================
+// ========== ROTA PARA RECALCULAR HIERARQUIA ==========
 app.post('/api/commission/recalculate-hierarchy', async (req, res) => {
   try {
     const db = dbService;
@@ -204,9 +190,7 @@ app.post('/api/commission/recalculate-hierarchy', async (req, res) => {
   }
 });
 
-// ============================================================
-// HEALTH CHECK E PING (públicos)
-// ============================================================
+// ---------- HEALTH CHECK E PING ----------
 app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
@@ -214,24 +198,18 @@ app.get('/api/ping', (req, res) => {
   res.json({ pong: true, time: new Date().toISOString() });
 });
 
-// ============================================================
-// FALLBACK 404
-// ============================================================
+// ---------- FALLBACK 404 ----------
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
 });
 
-// ============================================================
-// MIDDLEWARE DE ERRO
-// ============================================================
+// ---------- MIDDLEWARE DE ERRO ----------
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   res.status(500).json({ success: false, error: 'Erro interno do servidor' });
 });
 
-// ============================================================
-// INICIALIZAÇÃO
-// ============================================================
+// ---------- INICIALIZAÇÃO ----------
 const dbService = new PostgresService();
 async function startServer() {
   try {
