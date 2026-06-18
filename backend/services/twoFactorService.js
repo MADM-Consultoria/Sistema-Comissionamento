@@ -1,3 +1,4 @@
+// backend/services/twoFactorService.js
 import nodemailer from 'nodemailer';
 import crypto from 'crypto';
 
@@ -5,36 +6,36 @@ class TwoFactorService {
     constructor() {
         this.codes = new Map();
         this.resetCodes = new Map();
-        this.pendingResets = new Map();
 
-        // Configura o transporter apenas se as credenciais existirem
+        // Configuração robusta para Gmail
         const hasEmailConfig = process.env.EMAIL_USER && process.env.EMAIL_PASS;
         if (hasEmailConfig) {
             try {
                 this.transporter = nodemailer.createTransport({
-                   host: process.env.EMAIL_HOST || 'smtp.gmail.com',
-                   port: parseInt(process.env.EMAIL_PORT) || 587,
-                   secure: false, // true para 465, false para 587
-                   auth: {
-                    user: process.env.EMAIL_USER,
-                    pass: process.env.EMAIL_PASS,
-                  },
-                tls: {
-                    rejectUnauthorized: false, // importante para Render
-                },
-            connectionTimeout: 10000, // 10 segundos
-            });
-                console.log('📧 [2FA] Serviço de e-mail configurado.');
+                    host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+                    port: parseInt(process.env.EMAIL_PORT) || 587,
+                    secure: false, // true para 465, false para 587
+                    auth: {
+                        user: process.env.EMAIL_USER,
+                        pass: process.env.EMAIL_PASS,
+                    },
+                    tls: {
+                        rejectUnauthorized: false, // necessário para Render
+                    },
+                    connectionTimeout: 15000, // 15 segundos
+                    greetingTimeout: 15000,
+                    socketTimeout: 15000,
+                });
+                console.log('📧 [2FA] Transporter SMTP configurado.');
             } catch (err) {
                 console.error('❌ [2FA] Erro ao criar transporter:', err.message);
                 this.transporter = null;
             }
         } else {
-            console.warn('⚠️ [2FA] Variáveis de e-mail não definidas. Modo simulação ativado.');
+            console.warn('⚠️ [2FA] Variáveis de e-mail não definidas.');
             this.transporter = null;
         }
 
-        // Limpeza automática a cada minuto
         setInterval(() => this.cleanupExpiredCodes(), 60000);
     }
 
@@ -42,7 +43,7 @@ class TwoFactorService {
         return crypto.randomInt(100000, 999999).toString();
     }
 
-    // ===== 2FA Login =====
+    // ===== Envio de código 2FA com retry e fallback =====
     async sendCode(to, identifier, subject = 'Seu código de verificação', templateFn = null) {
         const code = this.generateCode();
         const expires = Date.now() + 5 * 60 * 1000;
@@ -51,8 +52,8 @@ class TwoFactorService {
         console.log(`🔑 [2FA] Código gerado para ${identifier}: ${code}`);
 
         if (!this.transporter) {
-            console.log(`📧 [SIMULAÇÃO] Código para ${to}: ${code}`);
-            return { success: true, code };
+            console.error('❌ [2FA] Transporter não configurado. Envie e-mail manualmente.');
+            return { success: false, error: 'SMTP não configurado' };
         }
 
         const defaultHtml = `
@@ -70,16 +71,45 @@ class TwoFactorService {
         const html = templateFn ? templateFn(code) : defaultHtml;
 
         try {
-            await this.transporter.sendMail({
+            const info = await this.transporter.sendMail({
                 from: `"MADM System" <${process.env.EMAIL_USER}>`,
                 to,
                 subject,
                 html,
             });
-            console.log(`✅ [2FA] Código enviado para ${to}`);
+            console.log(`✅ [2FA] E-mail enviado para ${to}: ${info.response}`);
             return { success: true, code };
         } catch (error) {
-            console.error('❌ [2FA] Erro ao enviar e-mail:', error.message);
+            console.error(`❌ [2FA] Erro ao enviar e-mail: ${error.message}`);
+
+            // Tenta uma segunda vez com fallback (porta 465/SSL)
+            if (error.message.includes('timeout') || error.message.includes('connection')) {
+                console.log('🔄 [2FA] Tentando fallback com porta 465/SSL...');
+                try {
+                    const fallbackTransporter = nodemailer.createTransport({
+                        host: process.env.EMAIL_HOST || 'smtp.gmail.com',
+                        port: 465,
+                        secure: true,
+                        auth: {
+                            user: process.env.EMAIL_USER,
+                            pass: process.env.EMAIL_PASS,
+                        },
+                        tls: { rejectUnauthorized: false },
+                        connectionTimeout: 15000,
+                    });
+                    await fallbackTransporter.sendMail({
+                        from: `"MADM System" <${process.env.EMAIL_USER}>`,
+                        to,
+                        subject,
+                        html,
+                    });
+                    console.log(`✅ [2FA] E-mail enviado via fallback para ${to}`);
+                    return { success: true, code };
+                } catch (fallbackError) {
+                    console.error(`❌ [2FA] Fallback também falhou: ${fallbackError.message}`);
+                    return { success: false, error: fallbackError.message };
+                }
+            }
             return { success: false, error: error.message };
         }
     }
@@ -94,10 +124,10 @@ class TwoFactorService {
         stored.attempts++;
         if (stored.attempts > 3) {
             this.codes.delete(identifier);
-            return { success: false, error: 'Muitas tentativas. Solicite novo código.' };
+            return { success: false, error: 'Muitas tentativas' };
         }
         if (stored.code !== code) {
-            return { success: false, error: `Código inválido. Tentativa ${stored.attempts}/3` };
+            return { success: false, error: `Código inválido (tentativa ${stored.attempts}/3)` };
         }
         this.codes.delete(identifier);
         return { success: true };
@@ -117,8 +147,7 @@ class TwoFactorService {
         console.log(`🔑 [PASSWORD RESET] Código gerado para ${userId}: ${code}`);
 
         if (!this.transporter) {
-            console.log(`📧 [SIMULAÇÃO] Código de reset para ${email}: ${code}`);
-            return { success: true };
+            return { success: false, error: 'SMTP não configurado' };
         }
 
         const html = `
@@ -142,10 +171,10 @@ class TwoFactorService {
                 subject: '🔐 Código de recuperação de senha',
                 html,
             });
-            console.log(`✅ [PASSWORD RESET] Código enviado para ${email}`);
+            console.log(`✅ [PASSWORD RESET] E-mail enviado para ${email}`);
             return { success: true };
         } catch (error) {
-            console.error('❌ [PASSWORD RESET] Erro:', error.message);
+            console.error(`❌ [PASSWORD RESET] Erro: ${error.message}`);
             return { success: false, error: error.message };
         }
     }
@@ -163,7 +192,7 @@ class TwoFactorService {
             return { success: false, error: 'Muitas tentativas' };
         }
         if (stored.code !== code) {
-            return { success: false, error: `Código inválido. Tentativa ${stored.attempts}/3` };
+            return { success: false, error: `Código inválido (tentativa ${stored.attempts}/3)` };
         }
         const resetToken = crypto.randomBytes(32).toString('hex');
         this.resetCodes.delete(userId);
@@ -179,7 +208,7 @@ class TwoFactorService {
         for (const [key, data] of this.resetCodes.entries()) {
             if (now > data.expires) { this.resetCodes.delete(key); removed++; }
         }
-        if (removed > 0) console.log(`🧹 ${removed} código(s) expirado(s) removido(s).`);
+        if (removed > 0) console.log(`🧹 ${removed} códigos expirados removidos.`);
     }
 }
 
