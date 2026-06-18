@@ -12,6 +12,9 @@ import { securityMiddleware } from './security/index.js';
 import helmet from 'helmet';
 import csrfLib from 'csrf';
 
+import authRouter from './routes/auth.js';
+console.log('🔍 authRouter carregado?', authRouter);
+
 const app = express();
 const PORT = process.env.PORT || 3007;
 
@@ -70,6 +73,10 @@ app.use((req, res, next) => {
 });
 
 // 7. ROTAS PÚBLICAS – SEM CSRF
+app.post('/api/auth/login-test', (req, res) => {
+  res.json({ success: true, message: 'Rota de teste funcionando' });
+});
+
 app.use('/api/auth', authRouter);
 app.get('/api/csrf-token', (req, res) => {
     const token = req.csrfToken();

@@ -18,7 +18,7 @@ const pool = new Pool({
     password: dbPassword,
     database: process.env.DB_NAME,
     ssl: false,
-});
+}); 
 
 const query = (text, params) => pool.query(text, params);
 
