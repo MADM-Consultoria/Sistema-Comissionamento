@@ -1,3 +1,4 @@
+// backend/routes/auth.js
 import express from 'express';
 import bcrypt from 'bcrypt';
 import twoFactorService from '../services/twoFactorService.js';
@@ -5,9 +6,11 @@ import db from '../services/db.js';
 import crypto from 'crypto';
 
 const router = express.Router();
-console.log('✅ [AUTH] Módulo carregado com twoFactorService real');
+console.log('✅ [AUTH] Módulo de autenticação carregado com twoFactorService real');
 
-// ===== função auxiliar =====
+// ============================================================
+// Função auxiliar para obter o período atual (YYYY-MM)
+// ============================================================
 function getCurrentPeriod() {
     const now = new Date();
     const year = now.getFullYear();
@@ -15,7 +18,11 @@ function getCurrentPeriod() {
     return `${year}-${month}`;
 }
 
-// ===== POST /api/auth/login =====
+// ============================================================
+// ROTAS DE AUTENTICAÇÃO
+// ============================================================
+
+// POST /api/auth/login
 router.post('/login', async (req, res) => {
     const { email, password } = req.body;
     const periodo = getCurrentPeriod();
@@ -55,14 +62,16 @@ router.post('/login', async (req, res) => {
             return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
         }
 
-        console.log(`👤 Usuário encontrado: ${user.colaborador}, grupo="${user.grupo}"`);
+        console.log(`👤 Usuário encontrado: ${user.colaborador}, grupo="${user.grupo}", status=${user.status}`);
 
+        // Verificação da senha com hash
         const match = await bcrypt.compare(password, user.senha_colaborador_hash);
         if (!match) {
             console.log(`❌ Login falhou: senha incorreta para ${email}`);
             return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
         }
 
+        // Dados temporários para o 2FA
         req.session.tempUser = {
             internal_id: user.internal_id,
             id_crm: user.id_crm,
@@ -74,6 +83,7 @@ router.post('/login', async (req, res) => {
             periodo: user.periodo
         };
 
+        // Envia código 2FA
         const sendResult = await twoFactorService.sendCode(user.email, user.colaborador);
         if (!sendResult.success) {
             console.log(`❌ Falha ao enviar código 2FA: ${sendResult.error}`);
@@ -90,7 +100,7 @@ router.post('/login', async (req, res) => {
     }
 });
 
-// ===== POST /api/auth/verify-2fa =====
+// POST /api/auth/verify-2fa
 router.post('/verify-2fa', async (req, res) => {
     const { tempToken, code } = req.body;
     const verification = twoFactorService.verifyCode(tempToken, code);
@@ -126,7 +136,7 @@ router.post('/verify-2fa', async (req, res) => {
     });
 });
 
-// ===== POST /api/auth/resend-code =====
+// POST /api/auth/resend-code
 router.post('/resend-code', async (req, res) => {
     const user = req.session.tempUser;
     if (!user) {
@@ -139,7 +149,7 @@ router.post('/resend-code', async (req, res) => {
     res.json({ success: true });
 });
 
-// ===== POST /api/auth/logout =====
+// POST /api/auth/logout
 router.post('/logout', (req, res) => {
     req.session.destroy((err) => {
         if (err) console.error('Erro ao destruir sessão:', err);
@@ -147,10 +157,16 @@ router.post('/logout', (req, res) => {
     });
 });
 
-// ===== Recuperação de senha =====
+// ============================================================
+// ROTAS DE RECUPERAÇÃO DE SENHA
+// ============================================================
+
+// POST /api/auth/forgot-password
 router.post('/forgot-password', async (req, res) => {
     const { email } = req.body;
-    if (!email) return res.status(400).json({ success: false, error: 'E-mail é obrigatório' });
+    if (!email) {
+        return res.status(400).json({ success: false, error: 'E-mail é obrigatório' });
+    }
 
     const periodo = getCurrentPeriod();
     const gruposPermitidos = [
@@ -179,7 +195,7 @@ router.post('/forgot-password', async (req, res) => {
         }
 
         const user = result.rows[0];
-        const userId = user.colaborador;
+        const userId = user.colaborador; // nome usado como ID no serviço 2FA
         const userEmail = user.email;
 
         const sendResult = await twoFactorService.sendPasswordResetCode(userEmail, userId);
@@ -187,6 +203,7 @@ router.post('/forgot-password', async (req, res) => {
             return res.status(500).json({ success: false, error: sendResult.error });
         }
 
+        // Armazena na sessão o e-mail, o nome e o internal_id
         req.session.resetEmail = email;
         req.session.resetName = userId;
         req.session.resetInternalId = user.internal_id;
@@ -198,9 +215,13 @@ router.post('/forgot-password', async (req, res) => {
     }
 });
 
+// POST /api/auth/verify-reset-code
 router.post('/verify-reset-code', async (req, res) => {
     const { email, code } = req.body;
-    if (!email || !code) return res.status(400).json({ success: false, error: 'E-mail e código são obrigatórios' });
+
+    if (!email || !code) {
+        return res.status(400).json({ success: false, error: 'E-mail e código são obrigatórios' });
+    }
 
     const resetName = req.session.resetName;
     const resetInternalId = req.session.resetInternalId;
@@ -216,6 +237,7 @@ router.post('/verify-reset-code', async (req, res) => {
             return res.status(401).json({ success: false, error: verification.error });
         }
 
+        // Agora armazena o internal_id para a atualização futura
         req.session.resetToken = verification.resetToken;
         req.session.resetUserId = resetInternalId;
 
@@ -232,9 +254,11 @@ router.post('/verify-reset-code', async (req, res) => {
     }
 });
 
+// POST /api/auth/reset-password
 router.post('/reset-password', async (req, res) => {
     const { resetToken, newPassword } = req.body;
-    const userId = req.session.resetUserId;
+
+    const userId = req.session.resetUserId;      // internal_id (integer)
     const storedToken = req.session.resetToken;
 
     if (!userId || !storedToken || storedToken !== resetToken) {
@@ -248,6 +272,7 @@ router.post('/reset-password', async (req, res) => {
         const saltRounds = 10;
         const hashedPassword = await bcrypt.hash(newPassword, saltRounds);
 
+        // Atualiza a senha e o timestamp na tabela de assessores
         const updateResult = await db.query(
             `UPDATE app_comissionamento.metricas_assessores
              SET senha_colaborador_hash = $1,
@@ -261,6 +286,7 @@ router.post('/reset-password', async (req, res) => {
             return res.status(404).json({ success: false, error: 'Assessor não encontrado' });
         }
 
+        // Limpa a sessão de recuperação
         delete req.session.resetToken;
         delete req.session.resetUserId;
         delete req.session.resetName;
