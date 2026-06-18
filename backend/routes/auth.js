@@ -6,8 +6,15 @@ import db from '../services/db.js';
 import crypto from 'crypto';
 
 const router = express.Router();
+console.log('✅ [AUTH] Módulo de autenticação carregado com twoFactorService real');
 
-// Função auxiliar para obter o período atual (YYYY-MM)
+// ===== ROTA DE TESTE =====
+router.get('/test', (req, res) => {
+  console.log('🔍 Rota /auth/test foi chamada');
+  res.json({ success: true, message: 'Rota auth/test funcionando' });
+});
+
+// ===== FUNÇÃO AUXILIAR =====
 function getCurrentPeriod() {
   const now = new Date();
   const year = now.getFullYear();
@@ -15,9 +22,7 @@ function getCurrentPeriod() {
   return `${year}-${month}`;
 }
 
-// ==================== AUTENTICAÇÃO ====================
-
-// POST /api/auth/login
+// ===== LOGIN =====
 router.post('/login', async (req, res) => {
   console.log('🔐 [LOGIN] Rota /login foi chamada');
   const { email, password } = req.body;
@@ -31,27 +36,26 @@ router.post('/login', async (req, res) => {
 
   console.log(`🔐 Tentativa de login: email=${email}, periodo=${periodo}`);
 
-    try {
-        // ✅ JOIN exclusivamente por e‑mail normalizado (case‑insensitive, sem espaços)
-        const result = await db.query(
-          `SELECT 
-              c.internal_id,
-              c.id_crm,
-              c.colaborador,
-              a.email,
-              a.senha_colaborador_hash,
-              c.equipe,
-              c.grupo,
-              c.status,
-              c.periodo
-           FROM app_comissionamento.metricas_assessores a
-               INNER JOIN madm.colaboradores c 
-                   ON LOWER(TRIM(a.email)) = LOWER(TRIM(c.e_mail))
-           WHERE LOWER(TRIM(a.email)) = LOWER(TRIM($1))
-             AND c.periodo = $2
-             AND TRIM(c.grupo) = ANY($3)`,
-          [email, periodo, gruposPermitidos]
-        );
+  try {
+    const result = await db.query(
+      `SELECT 
+          c.internal_id,
+          c.id_crm,
+          c.colaborador,
+          a.email,
+          a.senha_colaborador_hash,
+          c.equipe,
+          c.grupo,
+          c.status,
+          c.periodo
+       FROM app_comissionamento.metricas_assessores a
+           INNER JOIN madm.colaboradores c 
+               ON LOWER(TRIM(a.email)) = LOWER(TRIM(c.e_mail))
+       WHERE LOWER(TRIM(a.email)) = LOWER(TRIM($1))
+         AND c.periodo = $2
+         AND TRIM(c.grupo) = ANY($3)`,
+      [email, periodo, gruposPermitidos]
+    );
 
     const user = result.rows[0];
     if (!user) {
@@ -61,14 +65,12 @@ router.post('/login', async (req, res) => {
 
     console.log(`👤 Usuário encontrado: ${user.colaborador}, grupo="${user.grupo}", status=${user.status}`);
 
-    // Verificação da senha
     const match = await bcrypt.compare(password, user.senha_colaborador_hash);
     if (!match) {
       console.log(`❌ Login falhou: senha incorreta para ${email}`);
       return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     }
 
-    // Dados temporários para o 2FA
     req.session.tempUser = {
       internal_id: user.internal_id,
       id_crm: user.id_crm,
@@ -80,7 +82,6 @@ router.post('/login', async (req, res) => {
       periodo: user.periodo
     };
 
-    // Envia código 2FA
     const sendResult = await twoFactorService.sendCode(user.email, user.colaborador);
     if (!sendResult.success) {
       console.log(`❌ Falha ao enviar código 2FA: ${sendResult.error}`);
@@ -97,9 +98,7 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// ============================================================
-// VERIFICAÇÃO 2FA
-// ============================================================
+// ===== VERIFICAÇÃO 2FA =====
 router.post('/verify-2fa', async (req, res) => {
   const { tempToken, code } = req.body;
   const verification = twoFactorService.verifyCode(tempToken, code);
@@ -135,9 +134,7 @@ router.post('/verify-2fa', async (req, res) => {
   });
 });
 
-// ============================================================
-// REENVIO DE CÓDIGO 2FA
-// ============================================================
+// ===== REENVIO DE CÓDIGO =====
 router.post('/resend-code', async (req, res) => {
   const user = req.session.tempUser;
   if (!user) {
@@ -150,9 +147,7 @@ router.post('/resend-code', async (req, res) => {
   res.json({ success: true });
 });
 
-// ============================================================
-// LOGOUT
-// ============================================================
+// ===== LOGOUT =====
 router.post('/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) console.error('Erro ao destruir sessão:', err);
@@ -160,9 +155,7 @@ router.post('/logout', (req, res) => {
   });
 });
 
-// ==================== RECUPERAÇÃO DE SENHA ====================
-
-// POST /api/auth/forgot-password
+// ===== RECUPERAÇÃO DE SENHA =====
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) {
@@ -176,21 +169,20 @@ router.post('/forgot-password', async (req, res) => {
     'Coordenador', 'CEO', 'Diretoria'
   ];
 
-    try {
-        // ✅ JOIN exclusivamente por e‑mail normalizado
-        const result = await db.query(
-          `SELECT 
-              c.internal_id,
-              c.colaborador,
-              a.email
-           FROM app_comissionamento.metricas_assessores a
-               INNER JOIN madm.colaboradores c 
-                   ON LOWER(TRIM(a.email)) = LOWER(TRIM(c.e_mail))
-           WHERE LOWER(TRIM(a.email)) = LOWER(TRIM($1))
-             AND c.periodo = $2
-             AND TRIM(c.grupo) = ANY($3)`,
-          [email, periodo, gruposPermitidos]
-        );
+  try {
+    const result = await db.query(
+      `SELECT 
+          c.internal_id,
+          c.colaborador,
+          a.email
+       FROM app_comissionamento.metricas_assessores a
+           INNER JOIN madm.colaboradores c 
+               ON LOWER(TRIM(a.email)) = LOWER(TRIM(c.e_mail))
+       WHERE LOWER(TRIM(a.email)) = LOWER(TRIM($1))
+         AND c.periodo = $2
+         AND TRIM(c.grupo) = ANY($3)`,
+      [email, periodo, gruposPermitidos]
+    );
 
     if (result.rows.length === 0) {
       return res.status(404).json({ success: false, error: 'E-mail não encontrado ou sem permissão.' });
@@ -216,12 +208,8 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
-// ============================================================
-// RECUPERAÇÃO DE SENHA – VERIFICAÇÃO DO CÓDIGO
-// ============================================================
 router.post('/verify-reset-code', async (req, res) => {
   const { email, code } = req.body;
-
   if (!email || !code) {
     return res.status(400).json({ success: false, error: 'E-mail e código são obrigatórios' });
   }
@@ -256,12 +244,8 @@ router.post('/verify-reset-code', async (req, res) => {
   }
 });
 
-// ============================================================
-// RECUPERAÇÃO DE SENHA – REDEFINIÇÃO
-// ============================================================
 router.post('/reset-password', async (req, res) => {
   const { resetToken, newPassword } = req.body;
-
   const userId = req.session.resetUserId;
   const storedToken = req.session.resetToken;
 
