@@ -7,7 +7,7 @@ import helmet from 'helmet';
 import csrfLib from 'csrf';
 import { PostgresService } from './Postgree-Service.js';
 
-// Importação das rotas com log
+// Importação das rotas
 import authRouter from './routes/auth.js';
 console.log('🔍 authRouter carregado?', typeof authRouter, authRouter ? '✅' : '❌');
 
@@ -19,7 +19,7 @@ import { securityMiddleware } from './security/index.js';
 const app = express();
 const PORT = process.env.PORT || 3007;
 
-// ---------- TRUST PROXY (Render) ----------
+// ---------- TRUST PROXY (obrigatório para Render) ----------
 app.set('trust proxy', 1);
 
 // ---------- CORS ----------
@@ -29,7 +29,7 @@ app.use(cors({
   credentials: true,
 }));
 
-// ---------- SESSÃO ----------
+// ---------- SESSÃO (sem maxAge fixo – será definido na rota de login) ----------
 const isProduction = process.env.NODE_ENV === 'production';
 app.use(session({
   secret: process.env.SESSION_SECRET || 'fallback-secret',
@@ -39,7 +39,7 @@ app.use(session({
     secure: isProduction,
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
-    maxAge: 24 * 60 * 60 * 1000,
+    // maxAge será definido dinamicamente em /login
   },
 }));
 
@@ -88,7 +88,6 @@ function csrfProtection(req, res, next) {
   const token = req.headers['x-csrf-token'] || req.body._csrf;
   if (!tokens.verify(req.session.csrfSecret, token || '')) {
     console.warn('❌ CSRF inválido');
-    // RETORNA JSON EM VEZ DE RESPOSTA VAZIA
     return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página e tente novamente.' });
   }
   next();

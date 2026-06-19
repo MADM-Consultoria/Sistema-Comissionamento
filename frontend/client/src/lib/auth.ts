@@ -23,7 +23,6 @@ async function ensureCsrfToken(): Promise<string> {
   let token = localStorage.getItem('csrfToken');
   if (token) return token;
 
-  // Se não houver token, busca da API
   try {
     const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
     const data = await res.json();
@@ -45,10 +44,8 @@ function getCsrfToken(): string {
 // FUNÇÃO AUXILIAR – trata a resposta da API
 // ============================================================
 async function handleApiResponse(response: Response, defaultMessage: string) {
-  // Se a resposta for vazia (status 204 ou content-length 0), retorna objeto vazio
   const contentLength = response.headers.get('content-length');
   if (contentLength === '0' || response.status === 204) {
-    // Se for 403 (CSRF) e a resposta estiver vazia, lança erro específico
     if (response.status === 403) {
       throw new Error('Token CSRF inválido ou ausente. Recarregue a página e tente novamente.');
     }
@@ -78,7 +75,7 @@ async function handleApiResponse(response: Response, defaultMessage: string) {
 // ============================================================
 // LOGIN – envia credenciais e recebe tempToken para 2FA
 // ============================================================
-export async function login(email: string, password: string) {
+export async function login(email: string, password: string, rememberMe: boolean = false) {
   // Garante que o token CSRF exista antes de enviar
   await ensureCsrfToken();
 
@@ -89,7 +86,7 @@ export async function login(email: string, password: string) {
       'x-csrf-token': getCsrfToken(),
     },
     credentials: 'include',
-    body: JSON.stringify({ email, password }),
+    body: JSON.stringify({ email, password, rememberMe }),
   });
 
   return handleApiResponse(response, 'Erro no login');
@@ -144,7 +141,7 @@ export async function resendCode() {
 }
 
 // ============================================================
-// LOGOUT
+// LOGOUT – destrói a sessão e limpa dados locais
 // ============================================================
 export async function logout() {
   try {

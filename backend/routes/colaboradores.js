@@ -120,7 +120,7 @@ router.get('/collaborators', requireAuth, async (req, res) => {
         name: colab.colaborador,
         email: colab.e_mail,
         equipeId: colab.id_equipe ? String(colab.id_equipe) : '',
-        equipeNome,   // nome real da equipa, nunca "Sem equipe"
+        equipeNome,   
         grupo: colab.grupo || '',
         status: colab.status || 'ativo',
         periodo: colab.periodo || periodo,

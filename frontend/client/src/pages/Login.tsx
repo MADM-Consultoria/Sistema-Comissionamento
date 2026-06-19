@@ -21,26 +21,24 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [tempToken, setTempToken] = useState<string | null>(null);
+  const [rememberMe, setRememberMe] = useState(false); // <-- NOVO
   const [, setLocation] = useLocation();
 
-  // Ações do store
   const setCurrentUser = useAppStore((state) => state.setCurrentUser);
 
   // ===== Buscar token CSRF ao montar a página =====
   useEffect(() => {
     const fetchCsrfToken = async () => {
       try {
-        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: "include" });
         const data = await res.json();
-        if (data.csrfToken && data.csrfToken !== 'disabled') {
-          localStorage.setItem('csrfToken', data.csrfToken);
+        if (data.csrfToken && data.csrfToken !== "disabled") {
+          localStorage.setItem("csrfToken", data.csrfToken);
         }
       } catch (err) {
-        // Falha silenciosa – o token será obtido na primeira requisição
-        console.warn('Não foi possível obter token CSRF:', err);
+        console.warn("Não foi possível obter token CSRF:", err);
       }
     };
-
     fetchCsrfToken();
   }, []);
 
@@ -51,24 +49,20 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const data = await login(email, password);
+      const data = await login(email, password, rememberMe); // <-- REMEMBER_ME
       if (data.requiresTwoFactor) {
         setTempToken(data.tempToken);
         setStep("2fa");
       } else {
-        // Caso não exija 2FA (improvável, mas mantido)
         localStorage.setItem("accessToken", data.accessToken);
-        if (data.user) {
-          setCurrentUser(data.user);
-        }
+        if (data.user) setCurrentUser(data.user);
         setLocation("/");
       }
     } catch (err: any) {
-      // Se a mensagem de erro mencionar CSRF, orienta o usuário
-      if (err.message && err.message.toLowerCase().includes('csrf')) {
-        setError('Erro de segurança. Recarregue a página e tente novamente.');
+      if (err.message?.toLowerCase().includes("csrf")) {
+        setError("Erro de segurança. Recarregue a página e tente novamente.");
       } else {
-        setError(err.message || 'Erro ao fazer login. Verifique suas credenciais.');
+        setError(err.message || "Erro ao fazer login. Verifique suas credenciais.");
       }
     } finally {
       setIsLoading(false);
@@ -90,16 +84,11 @@ export default function Login() {
 
     try {
       const data = await verify2FA(tempToken, twoFactorCode);
-      
       localStorage.setItem("accessToken", data.accessToken);
-      
-      if (data.user) {
-        setCurrentUser(data.user);
-      }
-
+      if (data.user) setCurrentUser(data.user);
       setLocation("/");
     } catch (err: any) {
-      setError(err.message || 'Código inválido. Tente novamente.');
+      setError(err.message || "Código inválido. Tente novamente.");
     } finally {
       setIsLoading(false);
     }
@@ -116,9 +105,9 @@ export default function Login() {
     setError("");
     try {
       await resendCode();
-      alert("Novo código enviado para seu e-mail.");
+      alert("✅ Novo código enviado para seu e-mail.");
     } catch (err: any) {
-      setError(err.message || 'Erro ao reenviar código.');
+      setError(err.message || "Erro ao reenviar código.");
     } finally {
       setIsLoading(false);
     }
@@ -143,7 +132,7 @@ export default function Login() {
             <p className="text-sm text-gray-500 mt-1">
               {step === "credentials"
                 ? "Insira suas credenciais para continuar"
-                : "Digite o código de 6 dígitos enviado para seu e-mail"}
+                : `Digite o código de 6 dígitos enviado para ${email}`}
             </p>
           </div>
 
@@ -164,6 +153,7 @@ export default function Login() {
                       className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
                       placeholder="seu@madmbrasil.com"
                       required
+                      autoFocus
                     />
                   </div>
                 </div>
@@ -193,6 +183,20 @@ export default function Login() {
                   </div>
                 </div>
 
+                {/* ===== CHECKBOX LEMBRAR-ME ===== */}
+                <div className="flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    id="rememberMe"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 text-[#09175b] border-gray-300 rounded focus:ring-[#09175b]"
+                  />
+                  <label htmlFor="rememberMe" className="text-xs text-gray-600 cursor-pointer">
+                    Lembrar-me por 30 dias
+                  </label>
+                </div>
+
                 {error && <p className="text-red-500 text-xs">{error}</p>}
 
                 <button
@@ -209,16 +213,13 @@ export default function Login() {
                 <div className="text-center">
                   <p className="text-[13px] text-gray-500">
                     Esqueceu a senha?{" "}
-                    <a
-                      href="#"
-                      onClick={(e) => {
-                        e.preventDefault();
-                        setLocation("/forgot-password");
-                      }}
+                    <button
+                      type="button"
+                      onClick={() => setLocation("/forgot-password")}
                       className="text-[#09175b] hover:underline font-medium"
                     >
                       Clique aqui
-                    </a>
+                    </button>
                   </p>
                 </div>
               </form>
@@ -240,11 +241,12 @@ export default function Login() {
                       className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
                       placeholder="000000"
                       required
+                      autoFocus
                     />
                   </div>
                   <p className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
                     <Mail className="w-3 h-3" />
-                    Enviamos um código para o e-mail cadastrado.
+                    Enviamos um código para {email}
                   </p>
                 </div>
 
@@ -275,7 +277,7 @@ export default function Login() {
                     disabled={isLoading}
                     className="text-xs text-[#09175b] hover:underline flex items-center gap-1"
                   >
-                    <RefreshCw className="w-3 h-3" />
+                    <RefreshCw className={cn("w-3 h-3", isLoading && "animate-spin")} />
                     Reenviar código
                   </button>
                 </div>
@@ -285,7 +287,9 @@ export default function Login() {
 
           <div className="px-6 py-4 bg-gray-50 border-t border-gray-100 text-center">
             <p className="text-[10px] text-gray-400">
-              Sistema seguro com autenticação de dois fatores por e-mail.
+              {step === "credentials"
+                ? "Sistema seguro com autenticação de dois fatores por e-mail."
+                : "O código expira em 5 minutos. Verifique sua caixa de entrada ou spam."}
             </p>
           </div>
         </div>
