@@ -27,11 +27,11 @@ function getCurrentPeriod() {
 }
 
 // ============================================================
-// ROTA DE LOGIN
+// ROTA DE LOGIN (com suporte a rememberMe)
 // ============================================================
 router.post('/login', async (req, res) => {
   console.log('🔐 [LOGIN] Rota /login foi chamada');
-  const { email, password } = req.body;
+  const { email, password, rememberMe } = req.body; // <-- recebe rememberMe
   const periodo = getCurrentPeriod();
 
   const gruposPermitidos = [
@@ -40,7 +40,7 @@ router.post('/login', async (req, res) => {
     'Coordenador', 'CEO', 'Diretoria'
   ];
 
-  console.log(`🔐 Tentativa de login: email=${email}, periodo=${periodo}`);
+  console.log(`🔐 Tentativa de login: email=${email}, periodo=${periodo}, rememberMe=${rememberMe}`);
 
   try {
     const result = await db.query(
@@ -77,6 +77,22 @@ router.post('/login', async (req, res) => {
       return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     }
 
+    // ============================================================
+    // DEFINE A DURAÇÃO DA SESSÃO COM BASE NO rememberMe
+    // ============================================================
+    if (rememberMe) {
+      // Sessão de 30 dias
+      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias em ms
+      console.log('🔑 Sessão estendida para 30 dias (rememberMe ativo)');
+    } else {
+      // Sessão de 1 dia (padrão)
+      req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 dia em ms
+      console.log('🔑 Sessão padrão de 1 dia (rememberMe desativado)');
+    }
+
+    // ============================================================
+    // DADOS TEMPORÁRIOS PARA 2FA
+    // ============================================================
     req.session.tempUser = {
       internal_id: user.internal_id,
       id_crm: user.id_crm,
@@ -88,6 +104,7 @@ router.post('/login', async (req, res) => {
       periodo: user.periodo
     };
 
+    // ENVIA CÓDIGO 2FA (sempre – o rememberMe apenas estende a sessão)
     const sendResult = await twoFactorService.sendCode(user.email, user.colaborador);
     if (!sendResult.success) {
       console.log(`❌ Falha ao enviar código 2FA: ${sendResult.error}`);
