@@ -31,8 +31,9 @@ const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3007/api";
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
   'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
-  'Equipe Murilo Balsalobre', 'Comercial', 'Backoffice', 'CEO', 'Prontuário',
-  'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia','BackOffice'
+  'Equipe Murilo Balsalobre', 'Comercial', 'Backoffice', 'CEO', 'Prontuário','BackOffice',
+  'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo',
+  'Equipe Thales','Financeiro'
 ];
 
 const EXCLUDED_GROUPS = [
