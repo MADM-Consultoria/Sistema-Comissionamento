@@ -193,7 +193,7 @@ export default function Login() {
                     className="w-4 h-4 text-[#09175b] border-gray-300 rounded focus:ring-[#09175b]"
                   />
                   <label htmlFor="rememberMe" className="text-xs text-gray-600 cursor-pointer">
-                    Lembrar-me por 30 dias
+                    Lembrar-me
                   </label>
                 </div>
 
