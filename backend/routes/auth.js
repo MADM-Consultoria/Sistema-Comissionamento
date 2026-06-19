@@ -6,15 +6,19 @@ import db from '../services/db.js';
 import crypto from 'crypto';
 
 const router = express.Router();
-console.log('✅ [AUTH] Módulo de autenticação carregado com twoFactorService real');
+console.log('✅ [AUTH] Módulo de autenticação carregado');
 
-// ===== ROTA DE TESTE =====
+// ============================================================
+// ROTA DE TESTE (para diagnóstico)
+// ============================================================
 router.get('/test', (req, res) => {
   console.log('🔍 Rota /auth/test foi chamada');
   res.json({ success: true, message: 'Rota auth/test funcionando' });
 });
 
-// ===== FUNÇÃO AUXILIAR =====
+// ============================================================
+// FUNÇÃO AUXILIAR – período atual
+// ============================================================
 function getCurrentPeriod() {
   const now = new Date();
   const year = now.getFullYear();
@@ -22,7 +26,9 @@ function getCurrentPeriod() {
   return `${year}-${month}`;
 }
 
-// ===== LOGIN =====
+// ============================================================
+// ROTA DE LOGIN
+// ============================================================
 router.post('/login', async (req, res) => {
   console.log('🔐 [LOGIN] Rota /login foi chamada');
   const { email, password } = req.body;
@@ -59,7 +65,7 @@ router.post('/login', async (req, res) => {
 
     const user = result.rows[0];
     if (!user) {
-      console.log(`❌ Login falhou: usuário não encontrado para ${email} (período=${periodo})`);
+      console.log(`❌ Login falhou: usuário não encontrado para ${email}`);
       return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     }
 
@@ -98,7 +104,9 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// ===== VERIFICAÇÃO 2FA =====
+// ============================================================
+// VERIFICAÇÃO 2FA
+// ============================================================
 router.post('/verify-2fa', async (req, res) => {
   const { tempToken, code } = req.body;
   const verification = twoFactorService.verifyCode(tempToken, code);
@@ -134,7 +142,9 @@ router.post('/verify-2fa', async (req, res) => {
   });
 });
 
-// ===== REENVIO DE CÓDIGO =====
+// ============================================================
+// REENVIO DE CÓDIGO 2FA
+// ============================================================
 router.post('/resend-code', async (req, res) => {
   const user = req.session.tempUser;
   if (!user) {
@@ -147,7 +157,9 @@ router.post('/resend-code', async (req, res) => {
   res.json({ success: true });
 });
 
-// ===== LOGOUT =====
+// ============================================================
+// LOGOUT
+// ============================================================
 router.post('/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) console.error('Erro ao destruir sessão:', err);
@@ -155,7 +167,11 @@ router.post('/logout', (req, res) => {
   });
 });
 
-// ===== RECUPERAÇÃO DE SENHA =====
+// ============================================================
+// RECUPERAÇÃO DE SENHA (usando e‑mail)
+// ============================================================
+
+// 1. Envia código de recuperação
 router.post('/forgot-password', async (req, res) => {
   const { email } = req.body;
   if (!email) {
@@ -172,7 +188,6 @@ router.post('/forgot-password', async (req, res) => {
   try {
     const result = await db.query(
       `SELECT 
-          c.internal_id,
           c.colaborador,
           a.email
        FROM app_comissionamento.metricas_assessores a
@@ -199,7 +214,6 @@ router.post('/forgot-password', async (req, res) => {
 
     req.session.resetEmail = email;
     req.session.resetName = userId;
-    req.session.resetInternalId = user.internal_id;
 
     res.json({ success: true, message: 'Código de recuperação enviado para o e-mail.' });
   } catch (err) {
@@ -208,17 +222,18 @@ router.post('/forgot-password', async (req, res) => {
   }
 });
 
+// 2. Verifica o código e gera token de reset
 router.post('/verify-reset-code', async (req, res) => {
   const { email, code } = req.body;
+
   if (!email || !code) {
     return res.status(400).json({ success: false, error: 'E-mail e código são obrigatórios' });
   }
 
   const resetName = req.session.resetName;
-  const resetInternalId = req.session.resetInternalId;
   const storedEmail = req.session.resetEmail;
 
-  if (!resetName || !resetInternalId || storedEmail !== email) {
+  if (!resetName || storedEmail !== email) {
     return res.status(400).json({ success: false, error: 'Sessão de recuperação inválida ou e-mail divergente.' });
   }
 
@@ -229,7 +244,6 @@ router.post('/verify-reset-code', async (req, res) => {
     }
 
     req.session.resetToken = verification.resetToken;
-    req.session.resetUserId = resetInternalId;
 
     req.session.save((err) => {
       if (err) {
@@ -244,12 +258,14 @@ router.post('/verify-reset-code', async (req, res) => {
   }
 });
 
+// 3. Redefine a senha usando o e‑mail armazenado na sessão
 router.post('/reset-password', async (req, res) => {
   const { resetToken, newPassword } = req.body;
-  const userId = req.session.resetUserId;
-  const storedToken = req.session.resetToken;
 
-  if (!userId || !storedToken || storedToken !== resetToken) {
+  const storedToken = req.session.resetToken;
+  const email = req.session.resetEmail;
+
+  if (!email || !storedToken || storedToken !== resetToken) {
     return res.status(401).json({ success: false, error: 'Token inválido ou sessão expirada' });
   }
   if (!newPassword || newPassword.length < 6) {
@@ -264,20 +280,19 @@ router.post('/reset-password', async (req, res) => {
       `UPDATE app_comissionamento.metricas_assessores
        SET senha_colaborador_hash = $1,
            updated_at = NOW()
-       WHERE id_assessor::integer = $2
+       WHERE LOWER(TRIM(email)) = LOWER(TRIM($2))
        RETURNING id_assessor`,
-      [hashedPassword, userId]
+      [hashedPassword, email]
     );
 
     if (updateResult.rowCount === 0) {
       return res.status(404).json({ success: false, error: 'Assessor não encontrado' });
     }
 
+    // Limpa a sessão
     delete req.session.resetToken;
-    delete req.session.resetUserId;
-    delete req.session.resetName;
-    delete req.session.resetInternalId;
     delete req.session.resetEmail;
+    delete req.session.resetName;
 
     req.session.save((err) => {
       if (err) console.error('Erro ao salvar sessão após reset:', err);
