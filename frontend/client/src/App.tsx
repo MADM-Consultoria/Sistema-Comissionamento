@@ -90,7 +90,7 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>
-          {/* ROTA EM DESENVOLVIMENTO
+      {/* ROTA EM DESENVOLVIMENTO
       <Route path="/suporte">
         <PeriodProvider>
           <ProtectedRoute>
@@ -98,7 +98,6 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>*/}
-      {/* Fallback */}
       <Route path="/relatorio">
         <PeriodProvider>
           <ProtectedRoute>
@@ -112,9 +111,9 @@ function Router() {
 }
 
 function App() {
-  const { currentUser } = useAppStore();
+  const { currentUser, setCurrentUser } = useAppStore();
 
-  // ===== Buscar token CSRF ao montar (necessário para login) =====
+  // ===== 1. BUSCAR TOKEN CSRF AO MONTAR =====
   useEffect(() => {
     const fetchCsrfToken = async () => {
       try {
@@ -124,15 +123,33 @@ function App() {
           localStorage.setItem('csrfToken', data.csrfToken);
         }
       } catch (err) {
-        // Falha silenciosa – o token não é crítico se o backend não exigir
         console.warn('Não foi possível obter token CSRF:', err);
       }
     };
-
     fetchCsrfToken();
   }, []);
 
-  // ===== Atualizar token após login (opcional, mas seguro) =====
+  // ===== 2. VERIFICAR SESSÃO ATIVA AO CARREGAR =====
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        const res = await fetch(`${API_BASE}/auth/me`, {
+          credentials: 'include',
+        });
+        const data = await res.json();
+        if (data.success && data.user) {
+          setCurrentUser(data.user);
+          console.log('✅ Sessão restaurada:', data.user.name);
+        }
+      } catch (err) {
+        // Sessão não ativa – ignora
+        console.log('ℹ️ Nenhuma sessão ativa');
+      }
+    };
+    checkSession();
+  }, [setCurrentUser]);
+
+  // ===== 3. ATUALIZAR TOKEN CSRF APÓS LOGIN =====
   useEffect(() => {
     if (!currentUser) return;
 
@@ -147,7 +164,6 @@ function App() {
         console.error('Erro ao atualizar token CSRF:', err);
       }
     };
-
     refreshCsrfToken();
   }, [currentUser]);
 

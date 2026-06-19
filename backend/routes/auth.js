@@ -17,6 +17,19 @@ router.get('/test', (req, res) => {
 });
 
 // ============================================================
+// ROTA PARA VERIFICAR SESSÃO ATIVA (NOVA)
+// ============================================================
+router.get('/me', (req, res) => {
+  if (req.session.user) {
+    return res.json({
+      success: true,
+      user: req.session.user
+    });
+  }
+  return res.status(401).json({ success: false, error: 'Não autenticado' });
+});
+
+// ============================================================
 // FUNÇÃO AUXILIAR – período atual
 // ============================================================
 function getCurrentPeriod() {
@@ -31,7 +44,7 @@ function getCurrentPeriod() {
 // ============================================================
 router.post('/login', async (req, res) => {
   console.log('🔐 [LOGIN] Rota /login foi chamada');
-  const { email, password, rememberMe } = req.body; // <-- recebe rememberMe
+  const { email, password, rememberMe } = req.body;
   const periodo = getCurrentPeriod();
 
   const gruposPermitidos = [
