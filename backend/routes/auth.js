@@ -94,12 +94,12 @@ router.post('/login', async (req, res) => {
     // DEFINE A DURAÇÃO DA SESSÃO COM BASE NO rememberMe
     // ============================================================
     if (rememberMe) {
-      // Sessão de 30 dias
-      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias em ms
-      console.log('🔑 Sessão estendida para 30 dias (rememberMe ativo)');
-    } else {
-      // Sessão de 1 dia (padrão)
-      req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 dia em ms
+      req.session.cookie.maxAge = 30 * 24 * 60 * 60 * 1000; // 30 dias
+      req.session.cookie.expires = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000); // <-- ADICIONAR
+    console.log('🔑 Sessão estendida para 30 dias (rememberMe ativo)');
+      } else {
+      req.session.cookie.maxAge = 24 * 60 * 60 * 1000; // 1 dia
+      req.session.cookie.expires = new Date(Date.now() + 24 * 60 * 60 * 1000); // <-- ADICIONAR
       console.log('🔑 Sessão padrão de 1 dia (rememberMe desativado)');
     }
 

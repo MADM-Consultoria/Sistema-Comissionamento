@@ -21,7 +21,7 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [tempToken, setTempToken] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(false); // <-- NOVO
+  const [rememberMe, setRememberMe] = useState(false); 
   const [, setLocation] = useLocation();
 
   const setCurrentUser = useAppStore((state) => state.setCurrentUser);
@@ -49,7 +49,7 @@ export default function Login() {
     setIsLoading(true);
 
     try {
-      const data = await login(email, password, rememberMe); // <-- REMEMBER_ME
+      const data = await login(email, password, rememberMe);
       if (data.requiresTwoFactor) {
         setTempToken(data.tempToken);
         setStep("2fa");
@@ -193,7 +193,7 @@ export default function Login() {
                     className="w-4 h-4 text-[#09175b] border-gray-300 rounded focus:ring-[#09175b]"
                   />
                   <label htmlFor="rememberMe" className="text-xs text-gray-600 cursor-pointer">
-                    Lembrar-me
+                    Lembre de mim.
                   </label>
                 </div>
 
