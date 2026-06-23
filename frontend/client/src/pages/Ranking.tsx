@@ -17,8 +17,8 @@ const RANKING_BG =
 const WEIGHTS: Record<SortMetric, number> = {
   ganhos: 4,
   assinados: 3,
-  protocolados: 2,
-  emitidos: 1,
+  protocolados: 1,
+  emitidos: 2,
 };
 
 // ============================================================
