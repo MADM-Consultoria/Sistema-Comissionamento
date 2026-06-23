@@ -4,44 +4,25 @@ import DashboardLayout from "@/components/DashboardLayout";
 import { useAppStore } from "@/lib/dataStore";
 import {
   Trophy, Star, Crown, Medal, ArrowUp, ArrowDown, Minus,
-  FileText, CheckCircle, Award, Users, User, Package, Briefcase, Loader2, RefreshCw,
+  FileText, CheckCircle, Award, Users, User, Package, Briefcase, Loader2, RefreshCw, TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 
 const RANKING_BG =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663539696960/XjeLEb8phavPWoPR3fCUmm/madm-ranking-bg-ducCAYN4wgdYBLEESvf2bZ.webp";
 
-type RankingType = "colaborador" | "equipe";
-type SortMetric = "emitidos" | "assinados" | "protocolados" | "ganhos";
-
-interface RankingItem {
-  position: number;
-  name: string;
-  emitidos: number;
-  assinados: number;
-  protocolados: number;
-  ganhos: number;
-  avatar: string;
-  trend: "up" | "down" | "same";
-  isCurrentUser?: boolean;
-  equipe?: string;
-  id?: number;
-}
-
-interface TeamRankingItem {
-  position: number;
-  name: string;
-  emitidos: number;
-  assinados: number;
-  protocolados: number;
-  ganhos: number;
-  avatar: string;
-  trend: "up" | "down" | "same";
-  membersCount: number;
-}
+// ============================================================
+// CONFIGURAÇÃO DE PESOS (altere aqui para ajustar a importância)
+// ============================================================
+const WEIGHTS: Record<SortMetric, number> = {
+  ganhos: 4,
+  assinados: 3,
+  protocolados: 2,
+  emitidos: 1,
+};
 
 // ============================================================
-// CONSTANTES DE EXCLUSÃO (para ranking – exclui desativados, supervisores, etc.)
+// CONSTANTES DE EXCLUSÃO
 // ============================================================
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
@@ -58,6 +39,37 @@ const EXCLUDED_GROUPS = [
   "administrativo"
 ];
 
+type RankingType = "colaborador" | "equipe";
+type SortMetric = "emitidos" | "assinados" | "protocolados" | "ganhos";
+
+interface RankingItem {
+  position: number;
+  name: string;
+  emitidos: number;
+  assinados: number;
+  protocolados: number;
+  ganhos: number;
+  score: number;          // pontuação ponderada
+  avatar: string;
+  trend: "up" | "down" | "same";
+  isCurrentUser?: boolean;
+  equipe?: string;
+  id?: number;
+}
+
+interface TeamRankingItem {
+  position: number;
+  name: string;
+  emitidos: number;
+  assinados: number;
+  protocolados: number;
+  ganhos: number;
+  score: number;          // pontuação ponderada
+  avatar: string;
+  trend: "up" | "down" | "same";
+  membersCount: number;
+}
+
 const normalize = (str: string): string =>
   (str || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -65,7 +77,6 @@ const isExcludedTeam = (teamName: string) => EXCLUDED_TEAMS.includes(teamName);
 const isExcludedGroup = (group: string) =>
   EXCLUDED_GROUPS.some(g => normalize(g) === normalize(group));
 
-// Verifica se o colaborador está desativado (grupo "Desativado" ou equipe contém "Desativados")
 const isDesativado = (c: any) => {
   const grupo = normalize(c.grupo);
   const equipe = normalize(c.equipeNome);
@@ -116,20 +127,42 @@ function RankBadge({ position }: { position: number }) {
   );
 }
 
-function compareByPriority(
-  a: { ganhos: number; protocolados: number; assinados: number; emitidos: number },
-  b: { ganhos: number; protocolados: number; assinados: number; emitidos: number },
+/**
+ * Calcula a pontuação ponderada com base nos pesos e nas métricas ativas.
+ */
+function calculateWeightedScore(
+  item: { ganhos: number; assinados: number; protocolados: number; emitidos: number },
   activeMetrics: SortMetric[]
 ): number {
-  // Nova ordem: ganhos → assinados → emitidos → protocolados
-  const priorityOrder: SortMetric[] = ["ganhos", "assinados", "emitidos", "protocolados"];
-  for (const metric of priorityOrder) {
-    if (activeMetrics.includes(metric)) {
-      const aVal = a[metric];
-      const bVal = b[metric];
-      if (aVal !== bVal) return bVal - aVal;
-    }
+  let score = 0;
+  for (const metric of activeMetrics) {
+    const weight = WEIGHTS[metric] || 0;
+    const value = item[metric] || 0;
+    score += value * weight;
   }
+  return score;
+}
+
+/**
+ * Função de comparação: primeiro por score ponderado, depois pelos critérios de desempate
+ * (ganhos, assinados, protocolados, emitidos) na ordem em que aparecem.
+ */
+function compareByScore(
+  a: { ganhos: number; assinados: number; protocolados: number; emitidos: number; score: number },
+  b: { ganhos: number; assinados: number; protocolados: number; emitidos: number; score: number },
+  activeMetrics: SortMetric[]
+): number {
+  // 1º critério: score ponderado
+  if (a.score !== b.score) return b.score - a.score;
+
+  // Desempate: ganhos
+  if (a.ganhos !== b.ganhos) return b.ganhos - a.ganhos;
+  // depois assinados
+  if (a.assinados !== b.assinados) return b.assinados - a.assinados;
+  // depois protocolados
+  if (a.protocolados !== b.protocolados) return b.protocolados - a.protocolados;
+  // depois emitidos
+  if (a.emitidos !== b.emitidos) return b.emitidos - a.emitidos;
   return 0;
 }
 
@@ -149,7 +182,7 @@ export default function Ranking() {
   const [refreshing, setRefreshing] = useState(false);
   const [rankingType, setRankingType] = useState<RankingType>("colaborador");
   const [activeSortMetrics, setActiveSortMetrics] = useState<SortMetric[]>([
-    "emitidos", "assinados", "protocolados", "ganhos"
+    "ganhos", "assinados", "protocolados", "emitidos"
   ]);
   const [selectedProduct, setSelectedProduct] = useState<string>("Todos");
   const [selectedTeam, setSelectedTeam] = useState<string>("todas");
@@ -158,7 +191,7 @@ export default function Ranking() {
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
   const lastFiltersRef = useRef({ product: selectedProduct, team: selectedTeam, type: rankingType });
 
-  // ========== Função de recarga (compartilhada) ==========
+  // ========== Função de recarga ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -202,7 +235,7 @@ export default function Ranking() {
     load();
   }, [currentStartDate, currentEndDate, selectedProduct, selectedTeam, rankingType, reloadData]);
 
-  // ========== ATUALIZAÇÃO PERIÓDICA (polling a cada 60 segundos) ==========
+  // ========== Polling ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -214,13 +247,10 @@ export default function Ranking() {
     };
 
     const intervalId = setInterval(refresh, 60000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
-  // ========== FILTROS ==========
+  // ========== Filtros ==========
   const productToGroup: Record<string, string | string[] | undefined> = {
     Todos: undefined,
     "Auxilio Acidente": "Elite",
@@ -236,7 +266,6 @@ export default function Ranking() {
     return ["todas", ...equipeNomes];
   }, [equipeConfigs]);
 
-  // Sincroniza produto com equipe quando necessário
   useEffect(() => {
     if (selectedTeam === "todas") return;
     if (teamToProductMapping[selectedTeam]) {
@@ -249,7 +278,7 @@ export default function Ranking() {
     }
   }, [selectedTeam]);
 
-  // 🔥 Colaboradores que podem aparecer no ranking (exclui desativados, grupos indesejados e equipes excluídas)
+  // ========== Colaboradores elegíveis ==========
   const rankingCollaborators = useMemo(() => {
     let filtered = collaborators.filter(c => {
       if (isDesativado(c)) return false;
@@ -257,7 +286,6 @@ export default function Ranking() {
       if (isExcludedTeam(c.equipeNome)) return false;
       return true;
     });
-    // Filtro por produto
     if (selectedProduct !== "Todos") {
       const group = productToGroup[selectedProduct];
       if (group) {
@@ -268,7 +296,6 @@ export default function Ranking() {
         }
       }
     }
-    // Filtro por equipe (apenas para ranking individual)
     if (rankingType === "colaborador" && selectedTeam !== "todas") {
       filtered = filtered.filter(c => c.equipeNome === selectedTeam);
     }
@@ -277,24 +304,23 @@ export default function Ranking() {
 
   // ========== RANKING INDIVIDUAL ==========
   const individualRanking = useMemo(() => {
-    let items: RankingItem[] = rankingCollaborators.map((colab) => ({
-      position: 0,
-      id: colab.id,
-      name: colab.name,
-      emitidos: Number(colab.emitidos) || 0,
-      assinados: Number(colab.assinados) || 0,
-      protocolados: Number(colab.protocolados) || 0,
-      ganhos: Number(colab.ganhos) || 0,
-      avatar: colab.avatar || colab.name.charAt(0).toUpperCase(),
-      trend: "same",
-      isCurrentUser: colab.id === currentUser?.id,
-      equipe: colab.equipeNome,
-    }));
-    items.sort((a, b) => {
-      const cmp = compareByPriority(a, b, activeSortMetrics);
-      if (cmp !== 0) return cmp;
-      return a.name.localeCompare(b.name);
+    let items: RankingItem[] = rankingCollaborators.map((colab) => {
+      const base = {
+        id: colab.id,
+        name: colab.name,
+        emitidos: Number(colab.emitidos) || 0,
+        assinados: Number(colab.assinados) || 0,
+        protocolados: Number(colab.protocolados) || 0,
+        ganhos: Number(colab.ganhos) || 0,
+        avatar: colab.avatar || colab.name.charAt(0).toUpperCase(),
+        trend: "same" as const,
+        isCurrentUser: colab.id === currentUser?.id,
+        equipe: colab.equipeNome,
+      };
+      const score = calculateWeightedScore(base, activeSortMetrics);
+      return { ...base, score, position: 0 };
     });
+    items.sort((a, b) => compareByScore(a, b, activeSortMetrics));
     return items.map((item, idx) => ({ ...item, position: idx + 1 }));
   }, [rankingCollaborators, currentUser, activeSortMetrics]);
 
@@ -317,22 +343,21 @@ export default function Ranking() {
       team.ganhos += Number(collab.ganhos) || 0;
       team.members.push(collab.name);
     });
-    let teamItems: TeamRankingItem[] = Array.from(teamsMap.entries()).map(([name, data]) => ({
-      position: 0,
-      name,
-      emitidos: data.emitidos,
-      assinados: data.assinados,
-      protocolados: data.protocolados,
-      ganhos: data.ganhos,
-      avatar: name.charAt(0).toUpperCase(),
-      trend: "same",
-      membersCount: data.members.length,
-    }));
-    teamItems.sort((a, b) => {
-      const cmp = compareByPriority(a, b, activeSortMetrics);
-      if (cmp !== 0) return cmp;
-      return a.name.localeCompare(b.name);
+    let teamItems: TeamRankingItem[] = Array.from(teamsMap.entries()).map(([name, data]) => {
+      const base = {
+        name,
+        emitidos: data.emitidos,
+        assinados: data.assinados,
+        protocolados: data.protocolados,
+        ganhos: data.ganhos,
+        avatar: name.charAt(0).toUpperCase(),
+        trend: "same" as const,
+        membersCount: data.members.length,
+      };
+      const score = calculateWeightedScore(base, activeSortMetrics);
+      return { ...base, score, position: 0 };
     });
+    teamItems.sort((a, b) => compareByScore(a, b, activeSortMetrics));
     return teamItems.map((item, idx) => ({ ...item, position: idx + 1 }));
   }, [rankingCollaborators, activeSortMetrics]);
 
@@ -354,7 +379,6 @@ export default function Ranking() {
     ? myTeamRank.position - 1
     : 0;
 
-  // Totais do usuário (dos seus próprios dados)
   const currentUserData = useMemo(() => {
     if (!currentUser?.id) return null;
     return collaborators.find(c => c.id === currentUser.id);
@@ -422,7 +446,7 @@ export default function Ranking() {
       title="Ranking de Vendedores"
       subtitle="Veja quem são os melhores vendedores do mês e acompanhe sua posição!"
     >
-      {/* Indicador de atualização em tempo real */}
+      {/* Indicador de atualização */}
       <div className="flex items-center justify-end gap-2 mb-2">
         {refreshing && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 animate-pulse">
@@ -435,7 +459,7 @@ export default function Ranking() {
         </span>
       </div>
 
-      {/* Banner do usuário / equipe */}
+      {/* Banner */}
       <div
         className="relative rounded-2xl overflow-hidden mb-6 animate-fade-in-up"
         style={{ backgroundImage: `url(${RANKING_BG})`, backgroundSize: "cover", backgroundPosition: "center", minHeight: "180px" }}
@@ -484,7 +508,7 @@ export default function Ranking() {
                 <span className="text-white font-bold text-sm">{myProtocolados}</span>
               </div>
               <div className="flex items-center gap-1">
-                <Award className="w-3 h-3 text-[#ffcc00]" />
+                <TrendingUp className="w-3 h-3 text-[#ffcc00]" />
                 <span className="text-white/60 text-[10px]">Ganhos</span>
                 <span className="text-white font-bold text-sm">{Math.round(myGanhos)}</span>
               </div>
@@ -511,8 +535,8 @@ export default function Ranking() {
           </button>
         </div>
 
-        <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1">
-          {(["emitidos", "assinados", "protocolados", "ganhos"] as SortMetric[]).map((metric) => (
+        <div className="flex items-center gap-2 bg-gray-100 rounded-lg p-1 flex-wrap">
+          {(["ganhos", "assinados", "protocolados", "emitidos"] as SortMetric[]).map((metric) => (
             <label key={metric} className="flex items-center gap-1 px-2 py-1 rounded-md text-xs font-semibold cursor-pointer">
               <input
                 type="checkbox"
@@ -521,6 +545,7 @@ export default function Ranking() {
                 className="w-3.5 h-3.5 accent-[#09175b]"
               />
               <span className="text-gray-700">{metricLabels[metric]}</span>
+              <span className="text-[10px] text-gray-400 font-normal">(peso {WEIGHTS[metric]})</span>
             </label>
           ))}
         </div>
@@ -591,16 +616,21 @@ export default function Ranking() {
       <div className="madm-card animate-fade-in-up">
         <div className="p-5 border-b border-gray-100">
           <h3 className="text-sm font-bold text-[#09175b]">Classificação Completa — {rankingType === "colaborador" ? "Colaboradores" : "Equipes"}</h3>
-          <p className="text-xs text-gray-500 mt-1">{activeRanking.length} {rankingType === "colaborador" ? "consultores" : "equipes"} no ranking</p>
+          <p className="text-xs text-gray-500 mt-1">
+            {activeRanking.length} {rankingType === "colaborador" ? "consultores" : "equipes"} no ranking
+            <span className="ml-2 text-[#09175b] font-medium">• Ordenado por Pontuação Ponderada</span>
+          </p>
         </div>
 
-        <div className="px-5 py-2 border-b border-gray-100 hidden md:grid" style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 110px 110px 110px 110px 40px", gap: "0.75rem" }}>
+        <div className="px-5 py-2 border-b border-gray-100 hidden md:grid" style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px 40px", gap: "0.75rem" }}>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Pos</div><div></div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Nome</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Emitidos</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Assinados</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Protocolados</div>
-          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Ganhos</div><div></div>
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Ganhos</div>
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Score</div>
+          <div></div>
         </div>
 
         <div className="divide-y divide-gray-50">
@@ -613,7 +643,7 @@ export default function Ranking() {
               <div
                 key={person.position}
                 className={cn("flex flex-col md:grid items-center px-5 py-4 transition-colors", highlight ? "bg-[#eff6ff]" : "hover:bg-gray-50/50")}
-                style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 110px 110px 110px 110px 40px", gap: "0.75rem", ...(highlight ? { borderLeft: "3px solid #09175b" } : {}) }}
+                style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px 40px", gap: "0.75rem", ...(highlight ? { borderLeft: "3px solid #09175b" } : {}) }}
               >
                 <div><RankBadge position={person.position} /></div>
                 <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={isTop3 ? getPodiumStyle(person.position) : highlight ? { background: "#09175b", color: "#34a853" } : { background: "#f3f4f6", color: "#6b7280" }}>{getAvatar(person)}</div>
@@ -630,6 +660,7 @@ export default function Ranking() {
                 <div className="text-center text-sm font-bold text-[#34a853] whitespace-nowrap">{person.assinados}</div>
                 <div className="text-center text-sm font-bold text-[#045b5b] whitespace-nowrap">{person.protocolados}</div>
                 <div className="text-center text-sm font-bold text-[#f59e0b] whitespace-nowrap">{Math.round(person.ganhos)}</div>
+                <div className="text-center text-sm font-bold text-[#09175b] whitespace-nowrap">{person.score.toFixed(1)}</div>
                 <div className="flex items-center justify-center"><TrendIcon trend={person.trend} /></div>
               </div>
             );
@@ -638,7 +669,10 @@ export default function Ranking() {
 
         <div className="px-5 py-4 border-t border-gray-100 text-center">
           <p className="text-xs text-gray-400">
-            Ranking atualizado em tempo real • Ordenado por {activeSortMetrics.map((m) => metricLabels[m]).join(" + ")} (prioridade: Ganhos &gt; Protocolados &gt; Assinados &gt; Emitidos) • Produto: {selectedProduct}
+            Pontuação = Σ (valor da métrica × peso). Pesos atuais: {activeSortMetrics.map(m => `${metricLabels[m]} (${WEIGHTS[m]})`).join(' + ')}
+            {activeSortMetrics.length === 0 && " (nenhuma métrica selecionada)"}
+            <br />
+            {selectedProduct !== "Todos" && ` • Produto: ${selectedProduct}`}
             {rankingType === "colaborador" && selectedTeam !== "todas" && ` • Equipe: ${selectedTeam}`}
           </p>
         </div>
