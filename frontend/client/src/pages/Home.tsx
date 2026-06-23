@@ -42,13 +42,22 @@ const isDesativado = (c: Collaborator) => {
   return grupo === 'desativado' || equipe.includes('desativado');
 };
 
-// ========== Utilitários de datas com UTC ==========
+// ========== UTILITÁRIOS DE DATAS COM UTC (ROBUSTOS) ==========
 function parseUTCDate(dateStr: string): Date {
-  // Se a string for "YYYY-MM-DD", cria uma data UTC sem hora (meia-noite UTC)
+  if (!dateStr) return new Date(NaN);
+  // Se a string já contém 'T' ou 'Z', trata como ISO
+  if (dateStr.includes('T') || dateStr.includes('Z')) {
+    const d = new Date(dateStr);
+    if (!isNaN(d.getTime())) return d;
+    // fallback: adiciona 'T00:00:00Z'
+    return new Date(dateStr + 'T00:00:00Z');
+  }
+  // Caso contrário, assume "YYYY-MM-DD" e cria meia-noite UTC
   return new Date(dateStr + 'T00:00:00Z');
 }
 
 function formatUTCDate(date: Date): string {
+  if (isNaN(date.getTime())) return '';
   return date.toISOString().slice(0, 10);
 }
 
@@ -94,6 +103,7 @@ function getDailyChartDateRangeUTC(period: string, currentStart: string, current
 
 function isWeekdayUTC(dateStr: string): boolean {
   const date = parseUTCDate(dateStr);
+  if (isNaN(date.getTime())) return false;
   const day = date.getUTCDay();
   return day !== 0 && day !== 6;
 }
@@ -101,6 +111,7 @@ function isWeekdayUTC(dateStr: string): boolean {
 function countWeekdaysUTC(startDate: string, endDate: string): number {
   let start = parseUTCDate(startDate);
   const end = parseUTCDate(endDate);
+  if (isNaN(start.getTime()) || isNaN(end.getTime())) return 0;
   let count = 0;
   while (start <= end) {
     const day = start.getUTCDay();
@@ -110,7 +121,7 @@ function countWeekdaysUTC(startDate: string, endDate: string): number {
   return count;
 }
 
-// ========== Outros hooks e funções (mantidos) ==========
+// ========== OUTROS HOOKS E FUNÇÕES (MANTIDOS) ==========
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0);
   useEffect(() => {
@@ -419,33 +430,37 @@ export default function Home() {
           fetchEmitidos({ start: currentStartDate, end: currentEndDate, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi }),
           fetchAssinados({ start: currentStartDate, end: currentEndDate, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi, granularity: 'daily' })
         ]);
+        console.log('📡 [EA] Emitidos data:', emitidosData);
+        console.log('📡 [EA] Assinados data:', assinadosData);
         const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
         const emitidosMap = new Map<string, number>();
         const assinadosMap = new Map<string, number>();
-        // Agora usando UTC
-        const aggregateEA = (data: any[], map: Map<string, number>, key: string) => {
+        const aggregateEA = (data: any[], map: Map<string, number>) => {
           data.forEach((item: any) => {
             const dateStr = item.data || item.periodo;
             if (!dateStr) return;
             const date = parseUTCDate(dateStr);
+            if (isNaN(date.getTime())) return;
             const dayName = dayNames[date.getUTCDay()];
             const total = Number(item.total) || 0;
             map.set(dayName, (map.get(dayName) || 0) + total);
           });
         };
-        aggregateEA(emitidosData, emitidosMap, 'total');
-        aggregateEA(assinadosData, assinadosMap, 'total');
-        setWeeklyEA(['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(day => ({
+        aggregateEA(emitidosData, emitidosMap);
+        aggregateEA(assinadosData, assinadosMap);
+        const result = ['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(day => ({
           day,
           emitidos: emitidosMap.get(day) || 0,
           assinados: assinadosMap.get(day) || 0,
-        })));
+        }));
+        console.log('📊 [EA] Dados agregados:', result);
+        setWeeklyEA(result);
       } catch (err) { console.error('Erro ao carregar dados semanais emitidos/assinados:', err); }
     };
     fetchWeeklyData();
   }, [isSpecialGroup, currentStartDate, currentEndDate, filters, getChartFilterParams]);
 
-  // Gráfico de performance semanal (leads, assinados, ganhos) - agora com UTC
+  // Gráfico de performance semanal (leads, assinados, ganhos) - com UTC
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -454,11 +469,16 @@ export default function Home() {
         const { start, end } = getCurrentWeekDatesUTC();
         const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
         const commonParams = { start, end, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi, granularity: 'daily' as const };
+        console.log('📡 [WD] Parâmetros:', commonParams);
         const [leadsData, assinadosData, ganhosData] = await Promise.all([
           fetchLeadsRecebidos(commonParams),
           fetchAssinados(commonParams),
           fetchGanhos(commonParams),
         ]);
+        console.log('📦 [WD] leadsData bruto:', leadsData);
+        console.log('📦 [WD] assinadosData bruto:', assinadosData);
+        console.log('📦 [WD] ganhosData bruto:', ganhosData);
+
         const weekdays = ['Seg','Ter','Qua','Qui','Sex'];
         const leadsMap = new Map<string, number>();
         const assinadosMap = new Map<string, number>();
@@ -470,14 +490,15 @@ export default function Home() {
             let dateStr = item.data || item.periodo;
             if (!dateStr) return;
             const date = parseUTCDate(dateStr);
+            if (isNaN(date.getTime())) return;
             const dayIndex = date.getUTCDay();
             if (dayIndex === 0 || dayIndex === 6) return;
             const dayName = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dayIndex];
             const total = Number(item.total) || 0;
             map.set(dayName, (map.get(dayName) || 0) + total);
             if (!dateMap.has(dayName)) {
-              const day = date.getUTCDate().toString().padStart(2,'0');
-              const month = (date.getUTCMonth()+1).toString().padStart(2,'0');
+              const day = String(date.getUTCDate()).padStart(2, '0');
+              const month = String(date.getUTCMonth() + 1).padStart(2, '0');
               dateMap.set(dayName, `${day}/${month}`);
             }
           });
@@ -486,13 +507,15 @@ export default function Home() {
         aggregate(assinadosData, assinadosMap);
         aggregate(ganhosData, ganhosMap);
 
-        setWeeklyDetailed(weekdays.map(day => ({
+        const result = weekdays.map(day => ({
           day,
           dateExample: dateMap.get(day) || '',
           leads: leadsMap.get(day) || 0,
           assinados: assinadosMap.get(day) || 0,
           ganhos: ganhosMap.get(day) || 0,
-        })));
+        }));
+        console.log('📊 [WD] Dados agregados:', result);
+        setWeeklyDetailed(result);
       } catch (err) { console.error('Erro ao carregar dados semanais detalhados:', err); }
     };
     fetchWeeklyDetailed();
@@ -508,8 +531,10 @@ export default function Home() {
         const range = getDailyChartDateRangeUTC(period, currentStartDate, currentEndDate);
         const start = range.start;
         const end = range.end;
-        if (!start || !end) return;
-
+        if (!start || !end) {
+          console.warn('⚠️ Datas inválidas para gráfico diário');
+          return;
+        }
         const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
         const commonParams = {
           start,
@@ -519,16 +544,20 @@ export default function Home() {
           produto: produtoApi,
           granularity: 'daily' as const,
         };
+        console.log('📡 [DD] Parâmetros diários:', commonParams);
         const [leadsData, assinadosData] = await Promise.all([
           fetchLeadsRecebidos(commonParams),
           fetchAssinados(commonParams),
         ]);
+        console.log('📦 [DD] leadsData diário:', leadsData);
+        console.log('📦 [DD] assinadosData diário:', assinadosData);
 
         const leadsMap = new Map<string, number>();
         leadsData.forEach((item: any) => {
           const dateStr = item.data || item.periodo;
           if (!dateStr) return;
           const date = parseUTCDate(dateStr);
+          if (isNaN(date.getTime())) return;
           const formatted = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
           leadsMap.set(formatted, (leadsMap.get(formatted) || 0) + Number(item.total));
         });
@@ -537,6 +566,7 @@ export default function Home() {
           const dateStr = item.data || item.periodo;
           if (!dateStr) return;
           const date = parseUTCDate(dateStr);
+          if (isNaN(date.getTime())) return;
           const formatted = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
           assinadosMap.set(formatted, (assinadosMap.get(formatted) || 0) + Number(item.total));
         });
@@ -544,6 +574,10 @@ export default function Home() {
         const allDates: string[] = [];
         const currentDate = parseUTCDate(start);
         const endDate = parseUTCDate(end);
+        if (isNaN(currentDate.getTime()) || isNaN(endDate.getTime())) {
+          console.warn('⚠️ Datas inválidas:', { start, end });
+          return;
+        }
         const filterWeekend = period === "Semana";
         while (currentDate < endDate) {
           const dateStr = formatUTCDate(currentDate);
@@ -562,7 +596,7 @@ export default function Home() {
             assinados: assinadosMap.get(formatted) || 0,
           };
         });
-
+        console.log('📊 [DD] Dados agregados diários:', chartData);
         setDailyChartData(chartData);
       } catch (err) {
         console.error('Erro ao carregar dados diários:', err);
