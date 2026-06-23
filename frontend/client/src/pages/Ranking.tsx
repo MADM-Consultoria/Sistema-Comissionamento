@@ -121,7 +121,8 @@ function compareByPriority(
   b: { ganhos: number; protocolados: number; assinados: number; emitidos: number },
   activeMetrics: SortMetric[]
 ): number {
-  const priorityOrder: SortMetric[] = ["ganhos", "protocolados", "assinados", "emitidos"];
+  // Nova ordem: ganhos → assinados → emitidos → protocolados
+  const priorityOrder: SortMetric[] = ["ganhos", "assinados", "emitidos", "protocolados"];
   for (const metric of priorityOrder) {
     if (activeMetrics.includes(metric)) {
       const aVal = a[metric];
