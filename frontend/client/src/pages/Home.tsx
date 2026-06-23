@@ -42,80 +42,75 @@ const isDesativado = (c: Collaborator) => {
   return grupo === 'desativado' || equipe.includes('desativado');
 };
 
-// ========== Utilitários de datas ==========
-function getMonday(date: Date): Date {
-  const day = date.getDay();
+// ========== Utilitários de datas com UTC ==========
+function parseUTCDate(dateStr: string): Date {
+  // Se a string for "YYYY-MM-DD", cria uma data UTC sem hora (meia-noite UTC)
+  return new Date(dateStr + 'T00:00:00Z');
+}
+
+function formatUTCDate(date: Date): string {
+  return date.toISOString().slice(0, 10);
+}
+
+function getUTCMonday(date: Date): Date {
+  const d = new Date(date);
+  const day = d.getUTCDay();
   const diff = day === 0 ? -6 : 1 - day;
-  const monday = new Date(date);
-  monday.setDate(date.getDate() + diff);
-  monday.setHours(0, 0, 0, 0);
-  return monday;
+  d.setUTCDate(d.getUTCDate() + diff);
+  d.setUTCHours(0, 0, 0, 0);
+  return d;
 }
 
-function formatDate(d: Date): string {
-  return d.toISOString().slice(0, 10);
-}
-
-function getCurrentWeekDates(): { start: string; end: string } {
+function getCurrentWeekDatesUTC(): { start: string; end: string } {
   const now = new Date();
-  const day = now.getDay();
-  const diffToMonday = day === 0 ? -6 : 1 - day;
-  const monday = new Date(now);
-  monday.setDate(now.getDate() + diffToMonday);
-  monday.setHours(0, 0, 0, 0);
+  const monday = getUTCMonday(now);
   const sunday = new Date(monday);
-  sunday.setDate(monday.getDate() + 6);
-  sunday.setHours(23, 59, 59, 999);
-  return { start: monday.toISOString().slice(0, 10), end: sunday.toISOString().slice(0, 10) };
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  sunday.setUTCHours(23, 59, 59, 999);
+  return { start: formatUTCDate(monday), end: formatUTCDate(sunday) };
 }
 
-// Retorna o intervalo para o gráfico de produção diária
-function getDailyChartDateRange(period: string, currentStart: string, currentEnd: string): { start: string; end: string } {
+function getDailyChartDateRangeUTC(period: string, currentStart: string, currentEnd: string): { start: string; end: string } {
   if (period === "Hoje") {
     const today = new Date();
-    const monday = getMonday(today);
+    const monday = getUTCMonday(today);
     const endDate = new Date(today);
-    endDate.setDate(today.getDate() + 1);
-    return {
-      start: formatDate(monday),
-      end: formatDate(endDate),
-    };
+    endDate.setUTCDate(today.getUTCDate() + 1);
+    return { start: formatUTCDate(monday), end: formatUTCDate(endDate) };
   }
   if (period === "Semana") {
     const today = new Date();
-    const monday = getMonday(today);
+    const monday = getUTCMonday(today);
     const sunday = new Date(monday);
-    sunday.setDate(monday.getDate() + 6);
-    sunday.setHours(23, 59, 59, 999);
+    sunday.setUTCDate(monday.getUTCDate() + 6);
+    sunday.setUTCHours(23, 59, 59, 999);
     const endDate = new Date(sunday);
-    endDate.setDate(sunday.getDate() + 1);
-    return {
-      start: formatDate(monday),
-      end: formatDate(endDate),
-    };
+    endDate.setUTCDate(sunday.getUTCDate() + 1);
+    return { start: formatUTCDate(monday), end: formatUTCDate(endDate) };
   }
   // Para "Mês" mantém o intervalo original da store
   return { start: currentStart, end: currentEnd };
 }
 
-function isWeekday(dateStr: string): boolean {
-  const date = new Date(dateStr + "T12:00:00Z");
+function isWeekdayUTC(dateStr: string): boolean {
+  const date = parseUTCDate(dateStr);
   const day = date.getUTCDay();
   return day !== 0 && day !== 6;
 }
 
-function countWeekdays(startDate: string, endDate: string): number {
-  let start = new Date(startDate);
-  const end = new Date(endDate);
+function countWeekdaysUTC(startDate: string, endDate: string): number {
+  let start = parseUTCDate(startDate);
+  const end = parseUTCDate(endDate);
   let count = 0;
   while (start <= end) {
-    const day = start.getDay();
+    const day = start.getUTCDay();
     if (day !== 0 && day !== 6) count++;
-    start.setDate(start.getDate() + 1);
+    start.setUTCDate(start.getUTCDate() + 1);
   }
   return count;
 }
 
+// ========== Outros hooks e funções (mantidos) ==========
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0);
   useEffect(() => {
@@ -427,16 +422,19 @@ export default function Home() {
         const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
         const emitidosMap = new Map<string, number>();
         const assinadosMap = new Map<string, number>();
-        emitidosData.forEach((e: any) => {
-          const d = new Date(e.data || e.periodo);
-          const key = dayNames[d.getDay()];
-          emitidosMap.set(key, (emitidosMap.get(key) || 0) + Number(e.total));
-        });
-        assinadosData.forEach((a: any) => {
-          const d = new Date(a.data || a.periodo);
-          const key = dayNames[d.getDay()];
-          assinadosMap.set(key, (assinadosMap.get(key) || 0) + Number(a.total));
-        });
+        // Agora usando UTC
+        const aggregateEA = (data: any[], map: Map<string, number>, key: string) => {
+          data.forEach((item: any) => {
+            const dateStr = item.data || item.periodo;
+            if (!dateStr) return;
+            const date = parseUTCDate(dateStr);
+            const dayName = dayNames[date.getUTCDay()];
+            const total = Number(item.total) || 0;
+            map.set(dayName, (map.get(dayName) || 0) + total);
+          });
+        };
+        aggregateEA(emitidosData, emitidosMap, 'total');
+        aggregateEA(assinadosData, assinadosMap, 'total');
         setWeeklyEA(['Seg','Ter','Qua','Qui','Sex','Sáb','Dom'].map(day => ({
           day,
           emitidos: emitidosMap.get(day) || 0,
@@ -445,15 +443,15 @@ export default function Home() {
       } catch (err) { console.error('Erro ao carregar dados semanais emitidos/assinados:', err); }
     };
     fetchWeeklyData();
-  }, [isSpecialGroup, currentStartDate, currentEndDate, filters]);
+  }, [isSpecialGroup, currentStartDate, currentEndDate, filters, getChartFilterParams]);
 
-  // Gráfico de performance semanal (leads, assinados, ganhos) - mantido inalterado
+  // Gráfico de performance semanal (leads, assinados, ganhos) - agora com UTC
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
     const fetchWeeklyDetailed = async () => {
       try {
-        const { start, end } = getCurrentWeekDates();
+        const { start, end } = getCurrentWeekDatesUTC();
         const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
         const commonParams = { start, end, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi, granularity: 'daily' as const };
         const [leadsData, assinadosData, ganhosData] = await Promise.all([
@@ -466,24 +464,28 @@ export default function Home() {
         const assinadosMap = new Map<string, number>();
         const ganhosMap = new Map<string, number>();
         const dateMap = new Map<string, string>();
-        const aggregate = (data: any[], map: Map<string, number>, valueKey: string) => {
+
+        const aggregate = (data: any[], map: Map<string, number>) => {
           data.forEach(item => {
             let dateStr = item.data || item.periodo;
             if (!dateStr) return;
-            const date = new Date(dateStr);
-            const dayIndex = date.getDay();
+            const date = parseUTCDate(dateStr);
+            const dayIndex = date.getUTCDay();
             if (dayIndex === 0 || dayIndex === 6) return;
             const dayName = ['Dom','Seg','Ter','Qua','Qui','Sex','Sáb'][dayIndex];
-            const total = Number(item[valueKey] !== undefined ? item[valueKey] : item.total);
+            const total = Number(item.total) || 0;
             map.set(dayName, (map.get(dayName) || 0) + total);
             if (!dateMap.has(dayName)) {
-              dateMap.set(dayName, `${date.getDate().toString().padStart(2,'0')}/${(date.getMonth()+1).toString().padStart(2,'0')}`);
+              const day = date.getUTCDate().toString().padStart(2,'0');
+              const month = (date.getUTCMonth()+1).toString().padStart(2,'0');
+              dateMap.set(dayName, `${day}/${month}`);
             }
           });
         };
-        aggregate(leadsData, leadsMap, 'total');
-        aggregate(assinadosData, assinadosMap, 'total');
-        aggregate(ganhosData, ganhosMap, 'total');
+        aggregate(leadsData, leadsMap);
+        aggregate(assinadosData, assinadosMap);
+        aggregate(ganhosData, ganhosMap);
+
         setWeeklyDetailed(weekdays.map(day => ({
           day,
           dateExample: dateMap.get(day) || '',
@@ -494,16 +496,16 @@ export default function Home() {
       } catch (err) { console.error('Erro ao carregar dados semanais detalhados:', err); }
     };
     fetchWeeklyDetailed();
-  }, [isSpecialGroup, filters]);
+  }, [isSpecialGroup, filters, getChartFilterParams]);
 
-  // ========== GRÁFICO DE PRODUÇÃO DIÁRIA (com filtro de fins de semana para "Semana") ==========
+  // ========== GRÁFICO DE PRODUÇÃO DIÁRIA (com UTC) ==========
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
 
     const fetchDailyData = async () => {
       try {
-        const range = getDailyChartDateRange(period, currentStartDate, currentEndDate);
+        const range = getDailyChartDateRangeUTC(period, currentStartDate, currentEndDate);
         const start = range.start;
         const end = range.end;
         if (!start || !end) return;
@@ -524,34 +526,36 @@ export default function Home() {
 
         const leadsMap = new Map<string, number>();
         leadsData.forEach((item: any) => {
-          const date = item.data || item.periodo;
-          if (!date) return;
-          const formatted = new Date(date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+          const dateStr = item.data || item.periodo;
+          if (!dateStr) return;
+          const date = parseUTCDate(dateStr);
+          const formatted = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
           leadsMap.set(formatted, (leadsMap.get(formatted) || 0) + Number(item.total));
         });
         const assinadosMap = new Map<string, number>();
         assinadosData.forEach((item: any) => {
-          const date = item.data || item.periodo;
-          if (!date) return;
-          const formatted = new Date(date).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+          const dateStr = item.data || item.periodo;
+          if (!dateStr) return;
+          const date = parseUTCDate(dateStr);
+          const formatted = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
           assinadosMap.set(formatted, (assinadosMap.get(formatted) || 0) + Number(item.total));
         });
 
         const allDates: string[] = [];
-        const currentDate = new Date(start);
-        const endDate = new Date(end);
-        // Se período for "Semana", filtra apenas dias úteis (segunda a sexta)
+        const currentDate = parseUTCDate(start);
+        const endDate = parseUTCDate(end);
         const filterWeekend = period === "Semana";
         while (currentDate < endDate) {
-          const dateStr = currentDate.toISOString().slice(0, 10);
-          if (!filterWeekend || isWeekday(dateStr)) {
+          const dateStr = formatUTCDate(currentDate);
+          if (!filterWeekend || isWeekdayUTC(dateStr)) {
             allDates.push(dateStr);
           }
-          currentDate.setDate(currentDate.getDate() + 1);
+          currentDate.setUTCDate(currentDate.getUTCDate() + 1);
         }
 
         const chartData = allDates.map(dateStr => {
-          const formatted = new Date(dateStr).toLocaleDateString('pt-BR', { timeZone: 'UTC' });
+          const date = parseUTCDate(dateStr);
+          const formatted = date.toLocaleDateString('pt-BR', { timeZone: 'UTC' });
           return {
             date: formatted,
             leads: leadsMap.get(formatted) || 0,
@@ -579,8 +583,8 @@ export default function Home() {
     if (isSpecialGroup || weeklyDetailed.length === 0) {
       return { totalAssinados: 0, totalGanhos: 0, performanceAssinados: 0, performanceGanhos: 0, bestDay: { day: '', value: 0 }, avgGanhos: 0, daysWithMeta: 0, totalDays: 0 };
     }
-    const { start, end } = getCurrentWeekDates();
-    const weekdaysCount = countWeekdays(start, end);
+    const { start, end } = getCurrentWeekDatesUTC();
+    const weekdaysCount = countWeekdaysUTC(start, end);
     const totalMetaDiariaAssinados = displayCollaborators.reduce((sum, c) => sum + (c.metaDiarioAssinados || 3), 0);
     const targetAssinadosSemanal = totalMetaDiariaAssinados * weekdaysCount;
     const totalAssinados = weeklyDetailed.reduce((a, d) => a + d.assinados, 0);
