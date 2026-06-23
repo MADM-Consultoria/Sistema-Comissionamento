@@ -12,13 +12,13 @@ const RANKING_BG =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663539696960/XjeLEb8phavPWoPR3fCUmm/madm-ranking-bg-ducCAYN4wgdYBLEESvf2bZ.webp";
 
 // ============================================================
-// CONFIGURAÇÃO DE PESOS (altere aqui para ajustar a importância)
+// CONFIGURAÇÃO DE PESOS (ajustado: emitidos=2, protocolados=1)
 // ============================================================
 const WEIGHTS: Record<SortMetric, number> = {
   ganhos: 4,
   assinados: 3,
-  protocolados: 1,
-  emitidos: 2,
+  protocolados: 1,   // antes era 2
+  emitidos: 2,       // antes era 1
 };
 
 // ============================================================
@@ -49,7 +49,7 @@ interface RankingItem {
   assinados: number;
   protocolados: number;
   ganhos: number;
-  score: number;          // pontuação ponderada
+  score: number;
   avatar: string;
   trend: "up" | "down" | "same";
   isCurrentUser?: boolean;
@@ -64,7 +64,7 @@ interface TeamRankingItem {
   assinados: number;
   protocolados: number;
   ganhos: number;
-  score: number;          // pontuação ponderada
+  score: number;
   avatar: string;
   trend: "up" | "down" | "same";
   membersCount: number;
@@ -91,12 +91,6 @@ const teamToProductMapping: Record<string, string> = {
   "Equipe Quinquenio": "Quinquenio",
   "Equipe Quinquênio": "Quinquenio",
 };
-
-function TrendIcon({ trend }: { trend: "up" | "down" | "same" }) {
-  if (trend === "up") return <ArrowUp className="w-3 h-3 text-green-500" />;
-  if (trend === "down") return <ArrowDown className="w-3 h-3 text-red-500" />;
-  return <Minus className="w-3 h-3 text-gray-400" />;
-}
 
 function RankBadge({ position }: { position: number }) {
   if (position === 1) {
@@ -612,7 +606,7 @@ export default function Ranking() {
         </div>
       )}
 
-      {/* Tabela completa */}
+      {/* Tabela completa - remoção da coluna de tendência */}
       <div className="madm-card animate-fade-in-up">
         <div className="p-5 border-b border-gray-100">
           <h3 className="text-sm font-bold text-[#09175b]">Classificação Completa — {rankingType === "colaborador" ? "Colaboradores" : "Equipes"}</h3>
@@ -622,17 +616,19 @@ export default function Ranking() {
           </p>
         </div>
 
-        <div className="px-5 py-2 border-b border-gray-100 hidden md:grid" style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px 40px", gap: "0.75rem" }}>
-          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Pos</div><div></div>
+        {/* Cabeçalho da tabela sem a coluna de tendência */}
+        <div className="px-5 py-2 border-b border-gray-100 hidden md:grid" style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px", gap: "0.75rem" }}>
+          <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Pos</div>
+          <div></div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider">Nome</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Emitidos</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Assinados</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Protocolados</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Ganhos</div>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Score</div>
-          <div></div>
         </div>
 
+        {/* Linhas da tabela sem o ícone de tendência */}
         <div className="divide-y divide-gray-50">
           {activeRanking.map((person) => {
             const isTop3 = person.position <= 3;
@@ -643,7 +639,7 @@ export default function Ranking() {
               <div
                 key={person.position}
                 className={cn("flex flex-col md:grid items-center px-5 py-4 transition-colors", highlight ? "bg-[#eff6ff]" : "hover:bg-gray-50/50")}
-                style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px 40px", gap: "0.75rem", ...(highlight ? { borderLeft: "3px solid #09175b" } : {}) }}
+                style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px", gap: "0.75rem", ...(highlight ? { borderLeft: "3px solid #09175b" } : {}) }}
               >
                 <div><RankBadge position={person.position} /></div>
                 <div className="w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0" style={isTop3 ? getPodiumStyle(person.position) : highlight ? { background: "#09175b", color: "#34a853" } : { background: "#f3f4f6", color: "#6b7280" }}>{getAvatar(person)}</div>
@@ -661,7 +657,6 @@ export default function Ranking() {
                 <div className="text-center text-sm font-bold text-[#045b5b] whitespace-nowrap">{person.protocolados}</div>
                 <div className="text-center text-sm font-bold text-[#f59e0b] whitespace-nowrap">{Math.round(person.ganhos)}</div>
                 <div className="text-center text-sm font-bold text-[#09175b] whitespace-nowrap">{person.score.toFixed(1)}</div>
-                <div className="flex items-center justify-center"><TrendIcon trend={person.trend} /></div>
               </div>
             );
           })}
