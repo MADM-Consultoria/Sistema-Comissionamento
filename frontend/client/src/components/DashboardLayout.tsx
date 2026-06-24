@@ -29,8 +29,8 @@ const navItems = [
   { path: "/analytics", label: "Analytics", icon: BarChart3 },
   { path: "/ranking", label: "Ranking", icon: Trophy },
   { path: "/relatorio", label: "Relatório", icon: FileCheck },
-  //{ path: "/suporte", label: "Suporte", icon: Headphones },
   { path: "/notificacoes", label: "Notificações", icon: Bell },
+  //{ path: "/suporte", label: "Suporte", icon: Headphones },
   { path: "/configuration", label: "Configurações", icon: Settings },
 ];
 

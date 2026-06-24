@@ -15,6 +15,7 @@ import Ranking from "./pages/Ranking";
 import Relatorio from "./pages/Relatorio";
 import Notificacoes from "./pages/Notificacoes";
 import Configuration from "./pages/Configuration";
+import Suporte from "./pages/Suporte";
 import Login from "./pages/Login";
 import Verify2FA from "./pages/ResetPassword/Verify2FA";
 import ProtectedRoute from "./components/ProtectedRoute";
@@ -22,6 +23,27 @@ import ForgotPassword from "./pages/ResetPassword/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword/ResetPassword";
 import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
+
+// ============================================================
+// HEARTBEAT: mantém a sessão ativa
+// ============================================================
+function startHeartbeat(): NodeJS.Timeout {
+  const interval = setInterval(async () => {
+    try {
+      await fetch(`${API_BASE}/auth/ping`, {
+        credentials: 'include',
+        headers: {
+          'x-csrf-token': localStorage.getItem('csrfToken') || '',
+        },
+      });
+      // Silencioso – apenas renova a sessão
+    } catch (e) {
+      // Ignora erros de rede (ex: servidor offline)
+    }
+  }, 5 * 60 * 1000); // a cada 5 minutos
+
+  return interval;
+}
 
 function Router() {
   return (
@@ -90,14 +112,13 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>
-      {/* ROTA EM DESENVOLVIMENTO
       <Route path="/suporte">
         <PeriodProvider>
           <ProtectedRoute>
             <Suporte />
           </ProtectedRoute>
         </PeriodProvider>
-      </Route>*/}
+      </Route>
       <Route path="/relatorio">
         <PeriodProvider>
           <ProtectedRoute>
@@ -136,20 +157,38 @@ function App() {
         const res = await fetch(`${API_BASE}/auth/me`, {
           credentials: 'include',
         });
+        if (!res.ok) {
+          console.log('ℹ️ Nenhuma sessão ativa (status', res.status, ')');
+          return;
+        }
         const data = await res.json();
         if (data.success && data.user) {
           setCurrentUser(data.user);
           console.log('✅ Sessão restaurada:', data.user.name);
         }
       } catch (err) {
-        // Sessão não ativa – ignora
-        console.log('ℹ️ Nenhuma sessão ativa');
+        console.log('ℹ️ Nenhuma sessão ativa (erro de rede)');
       }
     };
     checkSession();
   }, [setCurrentUser]);
 
-  // ===== 3. ATUALIZAR TOKEN CSRF APÓS LOGIN =====
+  // ===== 3. HEARTBEAT: manter sessão ativa =====
+  useEffect(() => {
+    let heartbeatInterval: NodeJS.Timeout | null = null;
+
+    if (currentUser) {
+      heartbeatInterval = startHeartbeat();
+    }
+
+    return () => {
+      if (heartbeatInterval) {
+        clearInterval(heartbeatInterval);
+      }
+    };
+  }, [currentUser]);
+
+  // ===== 4. ATUALIZAR TOKEN CSRF APÓS LOGIN =====
   useEffect(() => {
     if (!currentUser) return;
 

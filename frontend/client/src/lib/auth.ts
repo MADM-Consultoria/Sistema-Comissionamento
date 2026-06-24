@@ -19,7 +19,7 @@ export interface UserData {
 // ============================================================
 // FUNÇÃO AUXILIAR – obtém o token CSRF (busca se não existir)
 // ============================================================
-async function ensureCsrfToken(): Promise<string> {
+export async function ensureCsrfToken(): Promise<string> {
   let token = localStorage.getItem('csrfToken');
   if (token) return token;
 
@@ -36,7 +36,7 @@ async function ensureCsrfToken(): Promise<string> {
   return '';
 }
 
-function getCsrfToken(): string {
+export function getCsrfToken(): string {
   return localStorage.getItem('csrfToken') || '';
 }
 
@@ -76,7 +76,6 @@ async function handleApiResponse(response: Response, defaultMessage: string) {
 // LOGIN – envia credenciais e recebe tempToken para 2FA
 // ============================================================
 export async function login(email: string, password: string, rememberMe: boolean = false) {
-  // Garante que o token CSRF exista antes de enviar
   await ensureCsrfToken();
 
   const response = await fetch(`${API_BASE}/auth/login`, {
@@ -159,4 +158,121 @@ export async function logout() {
   localStorage.removeItem('accessToken');
   localStorage.removeItem('csrfToken');
   sessionStorage.clear();
+  
+  // Para o heartbeat se estiver rodando
+  if (window.heartbeatInterval) {
+    clearInterval(window.heartbeatInterval);
+    window.heartbeatInterval = null;
+  }
+}
+
+// ============================================================
+// HEARTBEAT – mantém a sessão ativa com ping periódico
+// ============================================================
+let heartbeatInterval: number | null = null;
+
+export function startHeartbeat(intervalMs: number = 5 * 60 * 1000) {
+  // Se já estiver rodando, não inicia outro
+  if (heartbeatInterval) return;
+
+  console.log('💓 Heartbeat iniciado (ping a cada', intervalMs / 1000, 'segundos)');
+
+  // Função que envia ping
+  const sendPing = async () => {
+    try {
+      const response = await fetch(`${API_BASE}/auth/ping`, {
+        credentials: 'include',
+        headers: {
+          'x-csrf-token': getCsrfToken(),
+        },
+      });
+      if (!response.ok) {
+        console.warn('⚠️ Ping falhou, status:', response.status);
+        // Se receber 401, pode tentar renovar o token CSRF
+        if (response.status === 401 || response.status === 403) {
+          await ensureCsrfToken();
+        }
+      }
+    } catch (err) {
+      console.warn('⚠️ Erro no ping:', err);
+    }
+  };
+
+  // Envia ping imediatamente para iniciar
+  sendPing();
+
+  // Agenda o intervalo
+  heartbeatInterval = window.setInterval(sendPing, intervalMs);
+  
+  // Armazena no window para acesso externo (útil para limpeza)
+  window.heartbeatInterval = heartbeatInterval;
+}
+
+export function stopHeartbeat() {
+  if (heartbeatInterval) {
+    clearInterval(heartbeatInterval);
+    heartbeatInterval = null;
+    window.heartbeatInterval = null;
+    console.log('💓 Heartbeat parado');
+  }
+}
+
+// ============================================================
+// RENOVAÇÃO PERIÓDICA DO CSRF TOKEN
+// ============================================================
+let csrfRefreshInterval: number | null = null;
+
+export function startCsrfRefresh(intervalMs: number = 10 * 60 * 1000) {
+  if (csrfRefreshInterval) return;
+
+  console.log('🔄 CSRF refresh iniciado (a cada', intervalMs / 1000, 'segundos)');
+
+  const refreshCsrf = async () => {
+    try {
+      const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
+      const data = await res.json();
+      if (data.csrfToken && data.csrfToken !== 'disabled') {
+        localStorage.setItem('csrfToken', data.csrfToken);
+      }
+    } catch (err) {
+      console.warn('⚠️ Erro ao renovar CSRF token:', err);
+    }
+  };
+
+  refreshCsrf();
+  csrfRefreshInterval = window.setInterval(refreshCsrf, intervalMs);
+  window.csrfRefreshInterval = csrfRefreshInterval;
+}
+
+export function stopCsrfRefresh() {
+  if (csrfRefreshInterval) {
+    clearInterval(csrfRefreshInterval);
+    csrfRefreshInterval = null;
+    window.csrfRefreshInterval = null;
+  }
+}
+
+// ============================================================
+// DECLARAÇÃO DE TIPOS PARA WINDOW (para evitar erros TS)
+// ============================================================
+declare global {
+  interface Window {
+    heartbeatInterval: number | null;
+    csrfRefreshInterval: number | null;
+  }
+}
+
+// ============================================================
+// FUNÇÃO PARA INICIAR TODOS OS SERVIÇOS DE MANUTENÇÃO (chamar após login)
+// ============================================================
+export function startMaintenanceServices() {
+  // Heartbeat a cada 5 minutos (para manter sessão ativa)
+  startHeartbeat(5 * 60 * 1000);
+  // Renova CSRF a cada 10 minutos
+  startCsrfRefresh(10 * 60 * 1000);
+}
+
+export function stopMaintenanceServices() {
+  stopHeartbeat();
+  stopCsrfRefresh();
 }

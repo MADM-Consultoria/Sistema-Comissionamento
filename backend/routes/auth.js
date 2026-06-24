@@ -89,7 +89,7 @@ router.post('/login', async (req, res) => {
       console.log(`❌ Login falhou: senha incorreta para ${email}`);
       return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
     }
-
+ 
     // ============================================================
     // DEFINE A DURAÇÃO DA SESSÃO COM BASE NO rememberMe
     // ============================================================

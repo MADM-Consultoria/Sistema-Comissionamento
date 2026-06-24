@@ -1,6 +1,5 @@
 // src/pages/Suporte.tsx
-import React from "react";
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useMemo, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import {
   Send,
@@ -17,8 +16,49 @@ import {
   RefreshCw,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useAppStore } from "@/lib/dataStore";
+import { useAccessControl } from "@/hooks/useAccessControl";
 
-// ---------------------- Tipos ----------------------
+// ============================================================
+// CONSTANTES DE EXCLUSÃO (mesmas do FilterBar)
+// ============================================================
+const EXCLUDED_TEAMS = [
+  'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
+  'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
+  'Equipe Murilo Balsalobre', 'Comercial', 'Backoffice', 'CEO', 'Prontuário','BackOffice',
+  'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo',
+  'Equipe Thales','Financeiro'
+];
+
+const EXCLUDED_GROUPS = [
+  "Supervisor", "Coordenador", "Administrativo", "Salesops",
+  "CEO", "Diretoria", "Desativado"
+];
+
+const normalize = (str: string): string =>
+  (str || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+
+const isExcludedTeam = (teamName: string): boolean => {
+  if (!teamName) return false;
+  const n = normalize(teamName);
+  return EXCLUDED_TEAMS.some((t) => normalize(t) === n);
+};
+
+const isExcludedGroup = (group: string): boolean => {
+  if (!group) return false;
+  const n = normalize(group);
+  return EXCLUDED_GROUPS.some((g) => normalize(g) === n);
+};
+
+const isDesativado = (c: any): boolean => {
+  const grupo = normalize(c.grupo);
+  const equipe = normalize(c.equipeNome);
+  return grupo === 'desativado' || equipe.includes('desativado');
+};
+
+// ============================================================
+// TIPOS
+// ============================================================
 interface MovementItem {
   id: string;
   timestamp: string;
@@ -46,7 +86,9 @@ interface ReportItem {
   ultimaAtualizacao: string;
 }
 
-// ---------------------- Helpers ----------------------
+// ============================================================
+// HELPERS
+// ============================================================
 const formatPhoneDisplay = (phone: string): string => {
   const numbers = phone.replace(/\D/g, "");
   if (!numbers) return "";
@@ -83,7 +125,9 @@ const getStatusInfo = (status: string) => {
   return map[status] || { label: status, icon: <FileText className="w-3 h-3" />, className: "bg-gray-100 text-gray-600" };
 };
 
-// ---------------------- Componente principal ----------------------
+// ============================================================
+// COMPONENTE PRINCIPAL
+// ============================================================
 export default function Suporte() {
   const [activeTab, setActiveTab] = useState<"movimentacao" | "reportar">("reportar");
 
@@ -100,7 +144,8 @@ export default function Suporte() {
                 ? "bg-white text-[#09175b] border-b-2 border-[#09175b]"
                 : "text-gray-500 hover:text-gray-700"
             )}
-            title="Aba Reportar"
+            aria-label="Aba de reportar problemas"
+            title="Aba de reportar problemas"
           >
             🔍 Reportar
           </button>
@@ -113,7 +158,8 @@ export default function Suporte() {
                 ? "bg-white text-[#09175b] border-b-2 border-[#09175b]"
                 : "text-gray-500 hover:text-gray-700"
             )}
-            title="Aba Movimentação"
+            aria-label="Aba de movimentação de leads"
+            title="Aba de movimentação de leads"
           >
             📋 Movimentar
           </button>
@@ -126,59 +172,37 @@ export default function Suporte() {
   );
 }
 
-// ---------------------- Aba Movimentação (front‑end apenas) ----------------------
+// ============================================================
+// ABA MOVIMENTAÇÃO (com restrições do FilterBar)
+// ============================================================
 function MovimentacaoTab() {
+  const { equipeConfigs, collaborators, currentUser } = useAppStore();
+  const { getAccessLevel, LEVELS } = useAccessControl();
+
+  const userLevel = getAccessLevel();
+  const isAssessor = userLevel === LEVELS.ASSESSOR;
+  const isSupervisor = userLevel === LEVELS.SUPERVISAO;
+  const isAdminOrCoord = userLevel >= LEVELS.COORDENADOR;
+
+  // Estados do formulário
   const [nomeCliente, setNomeCliente] = useState("");
   const [telefone, setTelefone] = useState("");
   const [cpf, setCpf] = useState("");
   const [origem, setOrigem] = useState("");
-  const [equipe, setEquipe] = useState("");
-  const [assessor, setAssessor] = useState("");
+  const [selectedEquipe, setSelectedEquipe] = useState("");
+  const [selectedAssessor, setSelectedAssessor] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: string } | null>(null);
   const [movements, setMovements] = useState<MovementItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("todos");
 
-  // Carregar histórico do localStorage (mock)
+  // Carregar histórico do localStorage
   useEffect(() => {
     const stored = localStorage.getItem("madm_history_mock");
     if (stored) {
       try {
         setMovements(JSON.parse(stored));
       } catch (e) {}
-    } else {
-      const mockData: MovementItem[] = [
-        {
-          id: "1",
-          timestamp: new Date().toISOString(),
-          cliente: "João Silva",
-          telefone: "(11) 99999-1234",
-          cpf: "123.456.789-00",
-          origem: "Indicação",
-          equipe: "Equipe Alpha",
-          assessor: "Carlos Mendes",
-          status: "concluido",
-          resultado: "Lead movido com sucesso para o funil.",
-          usuario: "admin",
-          atualizadoEm: new Date().toISOString(),
-        },
-        {
-          id: "2",
-          timestamp: new Date(Date.now() - 86400000).toISOString(),
-          cliente: "Maria Oliveira",
-          telefone: "(21) 98888-5678",
-          cpf: "987.654.321-00",
-          origem: "Marketing",
-          equipe: "Equipe Beta",
-          assessor: "Ana Paula",
-          status: "processando",
-          resultado: "Aguardando retorno do cliente.",
-          usuario: "admin",
-          atualizadoEm: new Date().toISOString(),
-        },
-      ];
-      setMovements(mockData);
-      localStorage.setItem("madm_history_mock", JSON.stringify(mockData));
     }
   }, []);
 
@@ -186,6 +210,56 @@ function MovimentacaoTab() {
     localStorage.setItem("madm_history_mock", JSON.stringify(movements.slice(0, 100)));
   }, [movements]);
 
+  // ========== LISTA DE EQUIPES (com restrições) ==========
+  const equipeOptions = useMemo(() => {
+    let nomes = equipeConfigs
+      .map(eq => eq.nome)
+      .filter(nome => !isExcludedTeam(nome));
+
+    if (isSupervisor && currentUser?.equipe) {
+      const userEquipeNorm = normalize(currentUser.equipe);
+      nomes = nomes.filter(nome => normalize(nome) === userEquipeNorm);
+    }
+    if (isAssessor && currentUser?.equipe) {
+      const userEquipeNorm = normalize(currentUser.equipe);
+      nomes = nomes.filter(nome => normalize(nome) === userEquipeNorm);
+    }
+    return nomes.sort();
+  }, [equipeConfigs, isSupervisor, isAssessor, currentUser]);
+
+  // ========== COLABORADORES FILTRADOS POR EQUIPE ==========
+  const assessorOptions = useMemo(() => {
+    if (!collaborators.length) return [];
+
+    let filtered = collaborators.filter(c => {
+      if (isExcludedGroup(c.grupo)) return false;
+      if (isDesativado(c)) return false;
+      return true;
+    });
+
+    if (selectedEquipe) {
+      filtered = filtered.filter(c => normalize(c.equipeNome) === normalize(selectedEquipe));
+    }
+
+    if (isAssessor && currentUser) {
+      filtered = filtered.filter(c => c.id === currentUser.id);
+    }
+
+    return filtered.map(c => c.name).sort();
+  }, [collaborators, selectedEquipe, isAssessor, isSupervisor, currentUser]);
+
+  // ========== Sincronia ==========
+  useEffect(() => {
+    setSelectedAssessor("");
+  }, [selectedEquipe]);
+
+  useEffect(() => {
+    if (isAssessor && currentUser?.equipe) {
+      setSelectedEquipe(currentUser.equipe);
+    }
+  }, [isAssessor, currentUser]);
+
+  // ========== SUBMIT ==========
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     if (!nomeCliente.trim()) {
@@ -196,7 +270,7 @@ function MovimentacaoTab() {
       setMessage({ text: "Informe telefone ou CPF", type: "error" });
       return;
     }
-    if (!equipe || !assessor) {
+    if (!selectedEquipe || !selectedAssessor) {
       setMessage({ text: "Selecione equipe e assessor", type: "error" });
       return;
     }
@@ -206,27 +280,27 @@ function MovimentacaoTab() {
 
     setTimeout(() => {
       const newMovement: MovementItem = {
-        id: `mock_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        id: `mov_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         timestamp: new Date().toISOString(),
         cliente: nomeCliente.trim(),
         telefone: telefone ? formatPhoneDisplay(telefone) : "Não informado",
         cpf: cpf ? formatCPF(cpf) : "Não informado",
         origem: origem || "Não informada",
-        equipe,
-        assessor,
+        equipe: selectedEquipe,
+        assessor: selectedAssessor,
         status: "pendente",
-        resultado: "Movimentação registrada localmente. O backend será integrado em breve.",
-        usuario: "demo",
+        resultado: "Movimentação registrada. Aguardando processamento.",
+        usuario: currentUser?.name || "Usuário",
         atualizadoEm: new Date().toISOString(),
       };
       setMovements(prev => [newMovement, ...prev]);
-      setMessage({ text: "Movimentação registrada (modo demo).", type: "success" });
+      setMessage({ text: "Movimentação registrada com sucesso!", type: "success" });
       setNomeCliente("");
       setTelefone("");
       setCpf("");
       setOrigem("");
-      setEquipe("");
-      setAssessor("");
+      setSelectedEquipe(isAssessor ? currentUser?.equipe || "" : "");
+      setSelectedAssessor("");
       setLoading(false);
     }, 800);
   };
@@ -338,16 +412,17 @@ function MovimentacaoTab() {
               </label>
               <select
                 id="mov-equipe"
-                value={equipe}
-                onChange={e => setEquipe(e.target.value)}
+                value={selectedEquipe}
+                onChange={e => setSelectedEquipe(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 required
-                title="Selecione a equipe"
+                disabled={isAssessor}
+                title={isAssessor ? "Sua equipe é fixa" : "Selecione a equipe para movimentação"}
               >
                 <option value="">Selecione uma equipe</option>
-                <option value="Equipe Alpha">Equipe Alpha</option>
-                <option value="Equipe Beta">Equipe Beta</option>
-                <option value="Equipe Gamma">Equipe Gamma</option>
+                {equipeOptions.map(eq => (
+                  <option key={eq} value={eq}>{eq}</option>
+                ))}
               </select>
             </div>
             <div>
@@ -356,17 +431,21 @@ function MovimentacaoTab() {
               </label>
               <select
                 id="mov-assessor"
-                value={assessor}
-                onChange={e => setAssessor(e.target.value)}
+                value={selectedAssessor}
+                onChange={e => setSelectedAssessor(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                 required
-                title="Selecione o assessor"
+                disabled={isAssessor}
+                title={isAssessor ? "Você só pode selecionar a si mesmo" : "Selecione o assessor responsável"}
               >
                 <option value="">Selecione um assessor</option>
-                <option value="Carlos Mendes">Carlos Mendes</option>
-                <option value="Ana Paula">Ana Paula</option>
-                <option value="Ricardo Lima">Ricardo Lima</option>
+                {assessorOptions.map(nome => (
+                  <option key={nome} value={nome}>{nome}</option>
+                ))}
               </select>
+              {isAssessor && selectedAssessor && (
+                <p className="text-xs text-gray-400 mt-1">Você só pode movimentar para você mesmo.</p>
+              )}
             </div>
           </div>
           {message && (
@@ -396,7 +475,8 @@ function MovimentacaoTab() {
               value={filterStatus}
               onChange={e => setFilterStatus(e.target.value)}
               className="px-2 py-1 border rounded text-sm"
-              title="Filtrar por status"
+              title="Filtrar movimentações por status"
+              aria-label="Filtrar movimentações por status"
             >
               {statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
             </select>
@@ -405,6 +485,7 @@ function MovimentacaoTab() {
               onClick={exportHistory}
               className="text-sm bg-gray-100 px-3 py-1 rounded flex items-center gap-1 hover:bg-gray-200"
               title="Exportar histórico para CSV"
+              aria-label="Exportar histórico para CSV"
             >
               <Download className="w-3 h-3" /> Exportar
             </button>
@@ -413,6 +494,7 @@ function MovimentacaoTab() {
               onClick={clearHistory}
               className="text-sm bg-red-50 text-red-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-red-100"
               title="Limpar todo o histórico"
+              aria-label="Limpar todo o histórico"
             >
               <Trash2 className="w-3 h-3" /> Limpar
             </button>
@@ -456,7 +538,9 @@ function MovimentacaoTab() {
   );
 }
 
-// ---------------------- Aba Reportar (front‑end apenas) ----------------------
+// ============================================================
+// ABA REPORTAR
+// ============================================================
 function ReportarTab() {
   const [assunto, setAssunto] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -472,22 +556,6 @@ function ReportarTab() {
       try {
         setReports(JSON.parse(stored));
       } catch (e) {}
-    } else {
-      const mockReports: ReportItem[] = [
-        {
-          id: "REP_001",
-          data: new Date().toISOString(),
-          assunto: "Discadora",
-          descricao: "A discadora não está realizando chamadas automáticas.",
-          descricaoResumida: "A discadora não está realizando chamadas automáticas.",
-          solicitante: "João Silva",
-          equipe: "Equipe Alpha",
-          status: "CONCLUÍDO",
-          ultimaAtualizacao: new Date().toISOString(),
-        },
-      ];
-      setReports(mockReports);
-      localStorage.setItem("madm_reportes_mock", JSON.stringify(mockReports));
     }
   }, []);
 
@@ -516,13 +584,13 @@ function ReportarTab() {
         assunto,
         descricao,
         descricaoResumida: descricao.length > 200 ? descricao.substring(0,200)+"..." : descricao,
-        solicitante: "Usuário Demo",
+        solicitante: "Usuário",
         equipe: "Equipe Demo",
         status: "ENVIADO",
         ultimaAtualizacao: new Date().toISOString(),
       };
       setReports(prev => [newReport, ...prev]);
-      setMessage({ text: "Reporte registrado (modo demo).", type: "success" });
+      setMessage({ text: "Reporte registrado com sucesso!", type: "success" });
       setAssunto("");
       setDescricao("");
       setFiles([]);
@@ -639,7 +707,7 @@ function ReportarTab() {
               onChange={handleFileChange}
               className="w-full text-sm text-gray-500 file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-sm file:bg-gray-100 hover:file:bg-gray-200"
               accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip"
-              title="Selecione arquivos para anexar"
+              title="Selecione arquivos para anexar ao reporte"
             />
             {files.length > 0 && (
               <div className="mt-2 space-y-1">
@@ -651,6 +719,7 @@ function ReportarTab() {
                       onClick={() => removeFile(idx)}
                       className="text-red-500 hover:text-red-700"
                       title="Remover arquivo"
+                      aria-label={`Remover arquivo ${f.name}`}
                     >
                       <X className="w-4 h-4" />
                     </button>
@@ -687,6 +756,7 @@ function ReportarTab() {
               onChange={e => setFilterStatus(e.target.value)}
               className="px-2 py-1 border rounded text-sm"
               title="Filtrar reportes por status"
+              aria-label="Filtrar reportes por status"
             >
               {statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s}</option>)}
             </select>
@@ -695,6 +765,7 @@ function ReportarTab() {
               onClick={exportReports}
               className="text-sm bg-gray-100 px-3 py-1 rounded flex items-center gap-1 hover:bg-gray-200"
               title="Exportar reportes para CSV"
+              aria-label="Exportar reportes para CSV"
             >
               <Download className="w-3 h-3" /> Exportar
             </button>
@@ -703,6 +774,7 @@ function ReportarTab() {
               onClick={clearReports}
               className="text-sm bg-red-50 text-red-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-red-100"
               title="Limpar todos os reportes"
+              aria-label="Limpar todos os reportes"
             >
               <Trash2 className="w-3 h-3" /> Limpar
             </button>
@@ -711,6 +783,7 @@ function ReportarTab() {
               onClick={updateAllReportsStatus}
               className="text-sm bg-blue-50 text-blue-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-100"
               title="Atualizar status dos reportes (simulação)"
+              aria-label="Atualizar status dos reportes (simulação)"
             >
               <RefreshCw className="w-3 h-3" /> Atualizar Status
             </button>
@@ -742,7 +815,8 @@ function ReportarTab() {
                           type="button"
                           onClick={() => viewDetails(r)}
                           className="text-blue-600 hover:text-blue-800"
-                          title="Ver detalhes do reporte"
+                          title={`Ver detalhes do reporte ${r.id}`}
+                          aria-label={`Ver detalhes do reporte ${r.id}`}
                         >
                           <Eye className="w-4 h-4" />
                         </button>

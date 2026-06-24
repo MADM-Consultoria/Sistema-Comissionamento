@@ -12,5 +12,8 @@
   "devDependencies": {
     "@types/node": "^25.7.0",
     "@types/pg": "^8.20.0"
+  },
+  "dependencies": {
+    "connect-pg-simple": "^10.0.0"
   }
 }

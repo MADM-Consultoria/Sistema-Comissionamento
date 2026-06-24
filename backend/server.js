@@ -1,6 +1,7 @@
 // backend/server.js
 import 'dotenv/config';
 import session from 'express-session';
+import pgSession from 'connect-pg-simple';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -9,8 +10,6 @@ import { PostgresService } from './Postgree-Service.js';
 
 // Importação das rotas
 import authRouter from './routes/auth.js';
-console.log('🔍 authRouter carregado?', typeof authRouter, authRouter ? '✅' : '❌');
-
 import colaboradoresRoutes from './routes/colaboradores.js';
 import metricsRouter from './routes/metrics.js';
 import adminRoutes from './routes/admin.js';
@@ -29,17 +28,31 @@ app.use(cors({
   credentials: true,
 }));
 
-// ---------- SESSÃO (sem maxAge fixo – será definido na rota de login) ----------
+// ---------- CONEXÃO COM BANCO (para o store de sessão) ----------
+const dbService = new PostgresService();
+await dbService.connect(); // conecta antes de iniciar
+
+// ---------- SESSÃO COM PERSISTÊNCIA (PostgreSQL) ----------
+const PgStore = pgSession(session);
 const isProduction = process.env.NODE_ENV === 'production';
+
+const sessionStore = new PgStore({
+  pool: dbService.pool,          // usa o pool do PostgreSQL
+  tableName: 'session',          // nome da tabela (será criada se não existir)
+  createTableIfMissing: true,
+});
+
 app.use(session({
+  store: sessionStore,
   secret: process.env.SESSION_SECRET || 'fallback-secret',
   resave: false,
   saveUninitialized: false,
+  rolling: true,                 // 🔥 RENOVA O COOKIE A CADA REQUISIÇÃO
   cookie: {
     secure: isProduction,
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
-    // maxAge será definido dinamicamente em /login
+    maxAge: 30 * 24 * 60 * 60 * 1000, // 30 dias (padrão)
   },
 }));
 
@@ -82,7 +95,7 @@ app.get('/api/csrf-token', (req, res) => {
   res.json({ csrfToken: token });
 });
 
-// ---------- MIDDLEWARE DE VERIFICAÇÃO CSRF (com retorno JSON) ----------
+// ---------- MIDDLEWARE DE VERIFICAÇÃO CSRF ----------
 function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
@@ -197,6 +210,12 @@ app.get('/api/ping', (req, res) => {
   res.json({ pong: true, time: new Date().toISOString() });
 });
 
+// ---------- ROTA DE PING PARA MANTER SESSÃO ATIVA (heartbeat) ----------
+app.get('/api/auth/ping', (req, res) => {
+  // O middleware de sessão com rolling:true já renova automaticamente
+  res.json({ success: true, message: 'pong' });
+});
+
 // ---------- FALLBACK 404 ----------
 app.use((req, res) => {
   res.status(404).json({ error: 'Rota não encontrada' });
@@ -209,7 +228,6 @@ app.use((err, req, res, next) => {
 });
 
 // ---------- INICIALIZAÇÃO ----------
-const dbService = new PostgresService();
 async function startServer() {
   try {
     await dbService.connect();
