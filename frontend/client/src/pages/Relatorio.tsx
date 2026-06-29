@@ -307,7 +307,7 @@ export default function Relatorio() {
       }
     };
 
-    const intervalId = setInterval(refresh, 60000);
+    const intervalId = setInterval(refresh, 300000);
     return () => clearInterval(intervalId);
   }, [startDate, endDate, fetchData, refreshing]);
 

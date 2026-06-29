@@ -142,14 +142,22 @@ export default function FilterBar({
     }
   }, [currentUser, isAssessor, isSupervisor, isAdminOrCoord, initialEquipe, initialColaborador]);
 
-  // ========== Sincronia equipe <-> produto ==========
+  // ========== Sincronia equipe <-> produto (apenas sugestão, nunca bloqueia) ==========
   useEffect(() => {
+    // Se a equipe mapeia para um produto específico, podemos sugerir o produto,
+    // mas NÃO forçamos nem bloqueamos a edição.
     if (selectedEquipe && TEAM_TO_PRODUCT[selectedEquipe]) {
       const mapped = TEAM_TO_PRODUCT[selectedEquipe];
-      if (selectedProduto !== mapped) setSelectedProduto(mapped);
+      // Apenas se o produto atual for "Todos", sugerimos o mapeamento.
+      // Se o usuário já escolheu outro, mantemos.
+      if (selectedProduto === "Todos") {
+        setSelectedProduto(mapped);
+      }
     } else if (selectedProduto && PRODUCT_TO_TEAM[selectedProduto]) {
       const mapped = PRODUCT_TO_TEAM[selectedProduto];
-      if (selectedEquipe !== mapped) setSelectedEquipe(mapped);
+      if (selectedEquipe === "todas") {
+        setSelectedEquipe(mapped);
+      }
     }
   }, [selectedEquipe, selectedProduto]);
 
@@ -194,16 +202,12 @@ export default function FilterBar({
 
   // ========== 🔥 NOVO: AJUSTA EQUIPE AUTOMATICAMENTE QUANDO COLABORADOR É SELECIONADO ==========
   useEffect(() => {
-    // Se não houver colaboradores ou se for "todos", não faz nada
     if (selectedColaborador === "todos" || !collaborators.length) return;
-    // Se for assessor ou supervisor, a equipe é fixa, não alteramos
     if (isAssessor || isSupervisor) return;
 
-    // Encontra o colaborador selecionado
     const colab = collaborators.find(c => c.name === selectedColaborador);
     if (colab && colab.equipeNome) {
       const equipeDoColab = colab.equipeNome;
-      // Só atualiza se a equipe atual for diferente e se a equipe existir na lista
       if (selectedEquipe !== equipeDoColab && equipesDisponiveis.includes(equipeDoColab)) {
         setSelectedEquipe(equipeDoColab);
       }
@@ -270,7 +274,6 @@ export default function FilterBar({
 
   const isEquipeDisabled = isAssessor || isSupervisor || loadingEquipes;
   const isColaboradorDisabled = isAssessor || loadingCollaborators;
-  const isProdutoDisabled = !!selectedEquipe && TEAM_TO_PRODUCT[selectedEquipe] !== undefined;
 
   if (loadingEquipes && equipesDisponiveis.length === 0) {
     return (
@@ -383,7 +386,7 @@ export default function FilterBar({
             </div>
           )}
 
-          {/* Produto */}
+          {/* Produto – SEMPRE HABILITADO */}
           <div className="flex-1">
             <label className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
               <Package className="w-3 h-3" /> Produto
@@ -391,11 +394,7 @@ export default function FilterBar({
             <select
               value={selectedProduto}
               onChange={(e) => setSelectedProduto(e.target.value)}
-              disabled={isProdutoDisabled}
-              className={cn(
-                "w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09175b]/20",
-                isProdutoDisabled && "bg-gray-100 cursor-not-allowed"
-              )}
+              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
               aria-label="Filtrar por produto"
             >
               {PRODUCT_OPTIONS.map((prod) => (

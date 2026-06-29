@@ -296,7 +296,7 @@ export default function Funil() {
       }
     };
 
-    const intervalId = setInterval(refresh, 60000);
+    const intervalId = setInterval(refresh, 300000);
 
     return () => {
       clearInterval(intervalId);
