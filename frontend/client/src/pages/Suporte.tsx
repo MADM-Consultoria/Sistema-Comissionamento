@@ -23,6 +23,7 @@ interface MovementItem {
   id: string;
   timestamp: string;
   cliente: string;
+  email: string;
   telefone: string;
   cpf: string;
   origem: string;
@@ -126,9 +127,11 @@ export default function Suporte() {
   );
 }
 
-// ---------------------- Aba Movimentação (front‑end apenas) ----------------------
+// ---------------------- Aba Movimentação (front‑end apenas, sem mocks) ----------------------
 function MovimentacaoTab() {
-  const [nomeCliente, setNomeCliente] = useState("");
+  const [firstName, setFirstName] = useState("");
+  const [lastName, setLastName] = useState("");
+  const [email, setEmail] = useState("");
   const [telefone, setTelefone] = useState("");
   const [cpf, setCpf] = useState("");
   const [origem, setOrigem] = useState("");
@@ -139,61 +142,28 @@ function MovimentacaoTab() {
   const [movements, setMovements] = useState<MovementItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("todos");
 
-  // Carregar histórico do localStorage (mock)
-  useEffect(() => {
-    const stored = localStorage.getItem("madm_history_mock");
-    if (stored) {
-      try {
-        setMovements(JSON.parse(stored));
-      } catch (e) {}
-    } else {
-      const mockData: MovementItem[] = [
-        {
-          id: "1",
-          timestamp: new Date().toISOString(),
-          cliente: "João Silva",
-          telefone: "(11) 99999-1234",
-          cpf: "123.456.789-00",
-          origem: "Indicação",
-          equipe: "Equipe Alpha",
-          assessor: "Carlos Mendes",
-          status: "concluido",
-          resultado: "Lead movido com sucesso para o funil.",
-          usuario: "admin",
-          atualizadoEm: new Date().toISOString(),
-        },
-        {
-          id: "2",
-          timestamp: new Date(Date.now() - 86400000).toISOString(),
-          cliente: "Maria Oliveira",
-          telefone: "(21) 98888-5678",
-          cpf: "987.654.321-00",
-          origem: "Marketing",
-          equipe: "Equipe Beta",
-          assessor: "Ana Paula",
-          status: "processando",
-          resultado: "Aguardando retorno do cliente.",
-          usuario: "admin",
-          atualizadoEm: new Date().toISOString(),
-        },
-      ];
-      setMovements(mockData);
-      localStorage.setItem("madm_history_mock", JSON.stringify(mockData));
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("madm_history_mock", JSON.stringify(movements.slice(0, 100)));
-  }, [movements]);
+  // Sem dados mock – histórico começa vazio
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!nomeCliente.trim()) {
-      setMessage({ text: "Nome do cliente é obrigatório", type: "error" });
+
+    // Validações
+    if (!firstName.trim()) {
+      setMessage({ text: "Nome é obrigatório", type: "error" });
       return;
     }
-    if (!telefone && !cpf) {
-      setMessage({ text: "Informe telefone ou CPF", type: "error" });
+    if (!lastName.trim()) {
+      setMessage({ text: "Sobrenome é obrigatório", type: "error" });
+      return;
+    }
+    if (!email.trim()) {
+      setMessage({ text: "E-mail é obrigatório", type: "error" });
+      return;
+    }
+    // Validação simples de e-mail
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      setMessage({ text: "E-mail inválido", type: "error" });
       return;
     }
     if (!equipe || !assessor) {
@@ -205,10 +175,12 @@ function MovimentacaoTab() {
     setMessage(null);
 
     setTimeout(() => {
+      const fullName = `${firstName.trim()} ${lastName.trim()}`;
       const newMovement: MovementItem = {
-        id: `mock_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
+        id: `mov_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
         timestamp: new Date().toISOString(),
-        cliente: nomeCliente.trim(),
+        cliente: fullName,
+        email: email.trim(),
         telefone: telefone ? formatPhoneDisplay(telefone) : "Não informado",
         cpf: cpf ? formatCPF(cpf) : "Não informado",
         origem: origem || "Não informada",
@@ -221,7 +193,11 @@ function MovimentacaoTab() {
       };
       setMovements(prev => [newMovement, ...prev]);
       setMessage({ text: "Movimentação registrada (modo demo).", type: "success" });
-      setNomeCliente("");
+
+      // Limpar formulário
+      setFirstName("");
+      setLastName("");
+      setEmail("");
       setTelefone("");
       setCpf("");
       setOrigem("");
@@ -236,10 +212,11 @@ function MovimentacaoTab() {
 
   const exportHistory = () => {
     if (movements.length === 0) return;
-    const headers = ["Data/Hora","Cliente","Telefone","CPF","Equipe","Assessor","Status","Resultado"];
+    const headers = ["Data/Hora","Cliente","E-mail","Telefone","CPF","Equipe","Assessor","Status","Resultado"];
     const rows = movements.map(m => [
       new Date(m.timestamp).toLocaleString("pt-BR"),
       `"${m.cliente.replace(/"/g, '""')}"`,
+      `"${m.email.replace(/"/g, '""')}"`,
       `"${m.telefone.replace(/"/g, '""')}"`,
       `"${m.cpf.replace(/"/g, '""')}"`,
       `"${m.equipe.replace(/"/g, '""')}"`,
@@ -260,7 +237,6 @@ function MovimentacaoTab() {
   const clearHistory = () => {
     if (confirm("Limpar todo o histórico de movimentações?")) {
       setMovements([]);
-      localStorage.removeItem("madm_history_mock");
       setMessage({ text: "Histórico limpo.", type: "success" });
     }
   };
@@ -268,21 +244,52 @@ function MovimentacaoTab() {
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="madm-card p-5">
-        <h2 className="text-lg font-bold text-[#09175b] mb-4">Nova Movimentação</h2>
+        <h2 className="text-lg font-bold text-[#09175b] mb-4">Movimentação de Leads</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label htmlFor="mov-nomeCliente" className="block text-sm font-medium text-gray-700 mb-1">
-                Nome do Cliente *
+              <label htmlFor="mov-firstName" className="block text-sm font-medium text-gray-700 mb-1">
+                Nome *
               </label>
               <input
                 type="text"
-                id="mov-nomeCliente"
-                value={nomeCliente}
-                onChange={e => setNomeCliente(e.target.value)}
+                id="mov-firstName"
+                value={firstName}
+                onChange={e => setFirstName(e.target.value)}
                 className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-[#09175b] focus:border-[#09175b]"
-                placeholder="Digite o nome completo"
+                placeholder="Digite o nome"
                 title="Nome do cliente"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="mov-lastName" className="block text-sm font-medium text-gray-700 mb-1">
+                Sobrenome *
+              </label>
+              <input
+                type="text"
+                id="mov-lastName"
+                value={lastName}
+                onChange={e => setLastName(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-[#09175b] focus:border-[#09175b]"
+                placeholder="Digite o sobrenome"
+                title="Sobrenome do cliente"
+                required
+              />
+            </div>
+            <div>
+              <label htmlFor="mov-email" className="block text-sm font-medium text-gray-700 mb-1">
+                E-mail *
+              </label>
+              <input
+                type="email"
+                id="mov-email"
+                value={email}
+                onChange={e => setEmail(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-[#09175b] focus:border-[#09175b]"
+                placeholder="cliente@exemplo.com"
+                title="E-mail do cliente"
+                required
               />
             </div>
             <div>
@@ -427,6 +434,7 @@ function MovimentacaoTab() {
                 <tr>
                   <th className="pb-2">Data/Hora</th>
                   <th className="pb-2">Cliente</th>
+                  <th className="pb-2">E-mail</th>
                   <th className="pb-2">Contato</th>
                   <th className="pb-2">Equipe/Assessor</th>
                   <th className="pb-2">Status</th>
@@ -440,9 +448,20 @@ function MovimentacaoTab() {
                     <tr key={m.id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="py-2 whitespace-nowrap">{new Date(m.timestamp).toLocaleString("pt-BR")}</td>
                       <td className="py-2">{m.cliente}</td>
-                      <td className="py-2"><div>{m.telefone}</div><small className="text-gray-400">{m.cpf}</small></td>
-                      <td className="py-2"><div>{m.equipe}</div><small>{m.assessor}</small></td>
-                      <td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>{statusInfo.icon} {statusInfo.label}</span></td>
+                      <td className="py-2">{m.email}</td>
+                      <td className="py-2">
+                        <div>{m.telefone}</div>
+                        <small className="text-gray-400">{m.cpf}</small>
+                      </td>
+                      <td className="py-2">
+                        <div>{m.equipe}</div>
+                        <small>{m.assessor}</small>
+                      </td>
+                      <td className="py-2">
+                        <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>
+                          {statusInfo.icon} {statusInfo.label}
+                        </span>
+                      </td>
                       <td className="py-2 max-w-xs truncate">{m.resultado}</td>
                     </tr>
                   );
@@ -456,7 +475,7 @@ function MovimentacaoTab() {
   );
 }
 
-// ---------------------- Aba Reportar (front‑end apenas) ----------------------
+// ---------------------- Aba Reportar (front‑end apenas, sem mocks) ----------------------
 function ReportarTab() {
   const [assunto, setAssunto] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -466,34 +485,7 @@ function ReportarTab() {
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("todos");
 
-  useEffect(() => {
-    const stored = localStorage.getItem("madm_reportes_mock");
-    if (stored) {
-      try {
-        setReports(JSON.parse(stored));
-      } catch (e) {}
-    } else {
-      const mockReports: ReportItem[] = [
-        {
-          id: "REP_001",
-          data: new Date().toISOString(),
-          assunto: "Discadora",
-          descricao: "A discadora não está realizando chamadas automáticas.",
-          descricaoResumida: "A discadora não está realizando chamadas automáticas.",
-          solicitante: "João Silva",
-          equipe: "Equipe Alpha",
-          status: "CONCLUÍDO",
-          ultimaAtualizacao: new Date().toISOString(),
-        },
-      ];
-      setReports(mockReports);
-      localStorage.setItem("madm_reportes_mock", JSON.stringify(mockReports));
-    }
-  }, []);
-
-  useEffect(() => {
-    localStorage.setItem("madm_reportes_mock", JSON.stringify(reports.slice(0, 50)));
-  }, [reports]);
+  // Sem dados mock – lista de reportes começa vazia
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -565,7 +557,6 @@ function ReportarTab() {
   const clearReports = () => {
     if (confirm("Limpar todos os reportes?")) {
       setReports([]);
-      localStorage.removeItem("madm_reportes_mock");
       setMessage({ text: "Reportes limpos.", type: "success" });
     }
   };
@@ -605,7 +596,7 @@ function ReportarTab() {
             >
               <option value="">Selecionar assunto</option>
               <option value="Discadora">Discadora</option>
-              <option value="Kommo">Kommo</option>
+              <option value="CRM">CRM</option>
               <option value="Dash">Dash</option>
               <option value="Acesso">Acessos</option>
               <option value="Reversao">Reversão</option>
@@ -736,7 +727,11 @@ function ReportarTab() {
                     <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
                       <td className="py-2 whitespace-nowrap">{new Date(r.data).toLocaleString("pt-BR")}</td>
                       <td className="py-2">{r.assunto}</td>
-                      <td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>{statusInfo.icon} {statusInfo.label}</span></td>
+                      <td className="py-2">
+                        <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>
+                          {statusInfo.icon} {statusInfo.label}
+                        </span>
+                      </td>
                       <td className="py-2">
                         <button
                           type="button"

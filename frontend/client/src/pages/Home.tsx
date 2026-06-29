@@ -641,7 +641,7 @@ export default function Home() {
 
   const kpiCards = [
     { label: "Comissão do Mês", value: userCommission.comissaoTotal, target: 5000, unit: "R$", icon: DollarSign, color: "#09175b", simple: true },
-    { label: isSpecialGroup ? "Assinados" : "Vendas Fechadas", value: isSpecialGroup ? totals.assinados : totals.ganhos, target: isSpecialGroup ? totalTargetAssinados : totalTargetGanhos, unit: "", icon: FileCheck, color: "#34a853", simple: false },
+    { label: "Vendas Fechadas", value: totals.assinados, target: totalTargetAssinados, unit: "", icon: FileCheck, color: "#34a853", simple: false },
     { label: "Protocolados", value: totals.protocolados, target: 1200, unit: "", icon: BarChart2, color: "#045b5b", simple: false },
     { label: "Taxa de Conversão", value: conversaoPercentual, target: 100, unit: "%", icon: TrendingUp, color: "#f59e0b", simple: false },
   ];
