@@ -20,6 +20,7 @@ import Verify2FA from "./pages/ResetPassword/Verify2FA";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ForgotPassword from "./pages/ResetPassword/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword/ResetPassword";
+import Suporte from "./pages/Suporte";
 import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
 
@@ -90,14 +91,13 @@ function Router() {
           </ProtectedRoute>
         </PeriodProvider>
       </Route>
-      {/* ROTA EM DESENVOLVIMENTO
       <Route path="/suporte">
         <PeriodProvider>
           <ProtectedRoute>
             <Suporte />
           </ProtectedRoute>
-        </PeriodProvider>
-      </Route>*/}
+        </PeriodProvider> 
+      </Route>
       <Route path="/relatorio">
         <PeriodProvider>
           <ProtectedRoute>

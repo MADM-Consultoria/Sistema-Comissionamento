@@ -15,7 +15,7 @@ import {
 
 type PeriodoMeta = 'diario' | 'semanal' | 'mensal';
 
-// 🔒 Equipes e grupos que não devem aparecer nos cálculos de comissão
+// Equipes e grupos que não devem aparecer nos cálculos de comissão
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
   'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
@@ -32,7 +32,6 @@ const EXCLUDED_GROUPS = [
 
 const normalizeText = (text: string) => (text || '').trim().toLowerCase();
 
-// 🔥 Identifica se o colaborador é do grupo especial (apenas assinados)
 function isSpecialGroupColaborador(colaborador: any): boolean {
   const produto = (colaborador.produto || '').toLowerCase();
   const grupo = (colaborador.grupo || '').toLowerCase();
@@ -60,7 +59,6 @@ function obterMetaPorPeriodo(colaborador: any, periodo: PeriodoMeta) {
   }
 }
 
-// 🔥 Corrigido: o parâmetro isSpecial agora é específico do colaborador
 function calcularCiclosPeriodo(colaborador: any, periodo: PeriodoMeta, isSpecial: boolean): number {
   const meta = obterMetaPorPeriodo(colaborador, periodo);
   const assinados = colaborador.assinados || 0;
@@ -82,7 +80,7 @@ function obterBonusCiclo(colaborador: any, configEquipe: any[], configGlobal: an
 export default function Comissoes() {
   const {
     currentStartDate, currentEndDate,
-    collaborators: storeColabs, globalConfig, equipeConfigs,
+    collaborators: storeColabs, globalConfig, equipeConfigs, rawMetrics,
     loadCollaboratorsAndMetrics,
     loadWeeklyPerformanceData,
     loadRawMetrics,
@@ -103,7 +101,6 @@ export default function Comissoes() {
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
 
-  // ========== Função de recarga ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -122,7 +119,6 @@ export default function Comissoes() {
     }
   }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
-  // ========== Carregamento inicial ==========
   useEffect(() => {
     if (!currentStartDate || !currentEndDate) return;
 
@@ -155,7 +151,6 @@ export default function Comissoes() {
     load();
   }, [currentStartDate, currentEndDate, filters, reloadData]);
 
-  // ========== Polling ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -173,7 +168,6 @@ export default function Comissoes() {
     };
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
-  // Filtra colaboradores removendo equipes e grupos excluídos
   const filteredColabs = useMemo(() => {
     let filtered = storeColabs.filter(c => {
       if (EXCLUDED_TEAMS.some(team => normalizeText(c.equipeNome) === normalizeText(team))) return false;
@@ -184,7 +178,6 @@ export default function Comissoes() {
       return true;
     });
 
-    // Garante que o usuário logado apareça mesmo que esteja nos filtros de exclusão
     const hasCurrentUser = filtered.some(c => c.id === currentUser?.id);
     if (currentUser && !hasCurrentUser) {
       const userColab = storeColabs.find(c => c.id === currentUser.id);
@@ -193,10 +186,6 @@ export default function Comissoes() {
     return filtered;
   }, [storeColabs, filters, currentUser]);
 
-  // Determina se o filtro de produto global é especial (usado apenas para UI, não para cálculo)
-  const isSpecialFilter = filters.produto === "Quinquenio" || filters.produto === "Concomitante";
-
-  // Cálculo da comissão – agora baseado no colaborador individual
   const commissionData = useMemo(() => {
     const periods: PeriodoMeta[] = ['diario', 'semanal', 'mensal'];
     return filteredColabs.map(col => {
@@ -227,17 +216,15 @@ export default function Comissoes() {
         avatar: col.avatar || col.name.charAt(0).toUpperCase(),
         group: col.grupo,
         periodDetails,
-        isSpecial, // armazena para uso na UI
+        isSpecial,
       };
     }).sort((a, b) => b.totalCommission - a.totalCommission);
   }, [filteredColabs, equipeConfigs, globalConfig]);
 
   const totals = useMemo(() => {
-    const assinados = commissionData.reduce((s, i) => s + i.assinados, 0);
-    const ganhos = commissionData.reduce((s, i) => s + i.ganhos, 0);
     const comissao = commissionData.reduce((s, i) => s + i.totalCommission, 0);
     const ciclos = commissionData.reduce((s, i) => s + i.totalCycles, 0);
-    return { assinados, ganhos, comissao, ciclos };
+    return { comissao, ciclos };
   }, [commissionData]);
 
   const avgProgress = useMemo(() => {
@@ -274,6 +261,7 @@ export default function Comissoes() {
     return null;
   };
 
+  // Cartões de resumo – "Vendas Fechadas" usa rawMetrics.assinados e formatação sem separador de milhar
   const summaryCards = [
     {
       label: "Comissão Total Estimada", value: totals.comissao, icon: DollarSign,
@@ -284,10 +272,10 @@ export default function Comissoes() {
       color: "#34a853", bg: "#f0fdf4", sub: "Diário + Semanal + Mensal",
     },
     {
-      label: isSpecialFilter ? "Assinados" : "Vendas Fechadas",
-      value: isSpecialFilter ? totals.assinados : totals.ganhos,
-      icon: FileCheck, color: "#f59e0b", bg: "#fffbeb",
-      sub: isSpecialFilter ? "Total de assinados no período" : "Total de ganhos no período",
+      label: "Vendas Fechadas",
+      value: rawMetrics.assinados, icon: FileCheck, color: "#f59e0b", bg: "#fffbeb",
+      sub: "Total de assinados no período",
+      plainNumber: true,                     // sinalizador para evitar separador de milhar
     },
     {
       label: "Progresso Médio", value: avgProgress, icon: Target,
@@ -299,7 +287,6 @@ export default function Comissoes() {
 
   return (
     <DashboardLayout title="Painel de Comissões" subtitle="Comissão calculada pela soma de metas batidas diárias, semanais e mensais">
-      {/* Indicador de atualização em tempo real */}
       <div className="flex items-center justify-end gap-2 mb-2">
         {refreshing && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 animate-pulse">
@@ -353,6 +340,8 @@ export default function Comissoes() {
               const Icon = card.icon;
               const displayValue = card.isPercent
                 ? `${card.value.toFixed(1)}%`
+                : (card as any).plainNumber
+                ? card.value.toString()            // ex.: "1500" sem vírgula
                 : card.label.includes("R$") || card.label.includes("Comissão")
                 ? formatCurrency(card.value)
                 : card.value.toLocaleString();
@@ -399,7 +388,6 @@ export default function Comissoes() {
               <h3 className="text-sm font-bold text-[#09175b] mb-4">Metas Mensais vs Realizado</h3>
               <div className="space-y-4 max-h-[400px] overflow-y-auto pr-2 custom-scrollbar">
                 {commissionData.map(item => {
-                  // Para colaboradores especiais, ignoramos ganhos
                   const pctAss = item.metaAssinados ? (item.assinados / item.metaAssinados) * 100 : 0;
                   const pctGan = item.isSpecial ? 100 : (item.metaGanhos ? (item.ganhos / item.metaGanhos) * 100 : 100);
                   const pct = Math.min(pctAss, pctGan);
@@ -452,7 +440,7 @@ export default function Comissoes() {
             <h3 className="text-sm font-bold text-[#09175b] mb-3">Como a comissão é calculada</h3>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 text-xs text-gray-600">
               <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">1. Três períodos independentes:</span> diário, semanal e mensal. Cada um possui seu próprio peso e bônus.</div>
-              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">2. Metas batidas por período:</span> mínimo entre (assinados ÷ peso_assinados) e (ganhos ÷ peso_ganhos). <span className="text-blue-600 font-bold"></span></div>
+              <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">2. Metas batidas por período:</span> mínimo entre (assinados ÷ peso_assinados) e (ganhos ÷ peso_ganhos).</div>
               <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">3. Comissão total:</span> soma das comissões dos três períodos (cada uma = metas_batidas × bônus_do_período).</div>
               <div className="bg-gray-50 rounded-lg p-3"><span className="font-bold">4. Hierarquia:</span> supervisores somam os pesos de sua equipe; coordenadores/administrativos somam todos os ativos.</div>
             </div>
