@@ -15,6 +15,12 @@ interface FilterBarProps {
   initialProduto?: string;
 }
 
+const GLOBAL_META = {
+  diario: { assinados: 100, ganhos: 100 },
+  semanal: { assinados: 500, ganhos: 500 },
+  mensal: { assinados: 2000, ganhos: 2000 },
+};
+
 const normalize = (str: string): string => (str || '').trim().toLowerCase();
 
 const EXCLUDED_TEAMS = [

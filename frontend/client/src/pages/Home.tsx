@@ -29,6 +29,13 @@ const EXCLUDED_GROUPS_FOR_DISPLAY = [
   "Supervisor", "Coordenador", "Administrativo"
 ];
 
+// ========== METAS GLOBAIS (visão geral) ==========
+const GLOBAL_META = {
+  diario: { assinados: 100, ganhos: 100 },
+  semanal: { assinados: 500, ganhos: 500 },
+  mensal: { assinados: 2000, ganhos: 2000 },
+};
+
 const normalize = (str: string): string =>
   (str || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 
@@ -45,14 +52,11 @@ const isDesativado = (c: Collaborator) => {
 // ========== UTILITÁRIOS DE DATAS COM UTC (ROBUSTOS) ==========
 function parseUTCDate(dateStr: string): Date {
   if (!dateStr) return new Date(NaN);
-  // Se a string já contém 'T' ou 'Z', trata como ISO
   if (dateStr.includes('T') || dateStr.includes('Z')) {
     const d = new Date(dateStr);
     if (!isNaN(d.getTime())) return d;
-    // fallback: adiciona 'T00:00:00Z'
     return new Date(dateStr + 'T00:00:00Z');
   }
-  // Caso contrário, assume "YYYY-MM-DD" e cria meia-noite UTC
   return new Date(dateStr + 'T00:00:00Z');
 }
 
@@ -97,7 +101,6 @@ function getDailyChartDateRangeUTC(period: string, currentStart: string, current
     endDate.setUTCDate(sunday.getUTCDate() + 1);
     return { start: formatUTCDate(monday), end: formatUTCDate(endDate) };
   }
-  // Para "Mês" mantém o intervalo original da store
   return { start: currentStart, end: currentEnd };
 }
 
@@ -121,7 +124,7 @@ function countWeekdaysUTC(startDate: string, endDate: string): number {
   return count;
 }
 
-// ========== OUTROS HOOKS E FUNÇÕES (MANTIDOS) ==========
+// ========== OUTROS HOOKS E FUNÇÕES ==========
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0);
   useEffect(() => {
@@ -254,7 +257,7 @@ export default function Home() {
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
 
-  // ========== Função de recarga (compartilhada) ==========
+  // ========== Função de recarga ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -270,7 +273,6 @@ export default function Home() {
     }
   }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
-  // Helper: returns filter parameters adjusted for supervisor
   const getChartFilterParams = useCallback(() => {
     let equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
     let colaboradorApi = filters.colaborador === "todos" ? undefined : filters.colaborador;
@@ -322,7 +324,7 @@ export default function Home() {
     load();
   }, [currentStartDate, currentEndDate, filters, reloadData]);
 
-  // ========== ATUALIZAÇÃO PERIÓDICA (polling a cada 60 segundos) ==========
+  // ========== Polling a cada 60 segundos ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -371,8 +373,28 @@ export default function Home() {
   const pesoAssKey = `meta${periodKey.charAt(0).toUpperCase() + periodKey.slice(1)}Assinados` as keyof Collaborator;
   const pesoGanKey = `meta${periodKey.charAt(0).toUpperCase() + periodKey.slice(1)}Ganhos` as keyof Collaborator;
 
-  // ========== METAS ==========
+  // ========== METAS (com suporte à visão geral) ==========
+  const isGlobalView = filters.equipe === "todas" && filters.colaborador === "todos";
+
   const { totalTargetAssinados, totalTargetGanhos, totalMetasBatidas } = useMemo(() => {
+    if (isGlobalView) {
+      const meta = GLOBAL_META[periodKey as keyof typeof GLOBAL_META] || GLOBAL_META.mensal;
+      const assinados = rawMetrics.assinados;
+      const ganhos = rawMetrics.ganhos;
+      let metasBatidas;
+      if (isSpecialGroup) {
+        metasBatidas = Math.floor(assinados / (meta.assinados || 1));
+      } else {
+        metasBatidas = Math.floor(Math.min(assinados / (meta.assinados || 1), ganhos / (meta.ganhos || 1)));
+      }
+      return {
+        totalTargetAssinados: meta.assinados,
+        totalTargetGanhos: meta.ganhos,
+        totalMetasBatidas: metasBatidas,
+      };
+    }
+
+    // Lógica original (soma das metas individuais)
     let sumAss = 0, sumGan = 0, metas = 0;
     displayCollaborators.forEach(c => {
       const pesoAss = Number(c[pesoAssKey]) || 0;
@@ -391,7 +413,7 @@ export default function Home() {
       }
     });
     return { totalTargetAssinados: sumAss, totalTargetGanhos: sumGan, totalMetasBatidas: metas };
-  }, [displayCollaborators, pesoAssKey, pesoGanKey, isSpecialGroup]);
+  }, [isGlobalView, displayCollaborators, pesoAssKey, pesoGanKey, rawMetrics, isSpecialGroup, periodKey]);
 
   const goalProgress = useMemo(() => {
     const progressAss = totalTargetAssinados > 0 ? (totals.assinados / totalTargetAssinados) * 100 : 0;
@@ -430,8 +452,6 @@ export default function Home() {
           fetchEmitidos({ start: currentStartDate, end: currentEndDate, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi }),
           fetchAssinados({ start: currentStartDate, end: currentEndDate, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi, granularity: 'daily' })
         ]);
-        console.log('📡 [EA] Emitidos data:', emitidosData);
-        console.log('📡 [EA] Assinados data:', assinadosData);
         const dayNames = ['Dom', 'Seg', 'Ter', 'Qua', 'Qui', 'Sex', 'Sáb'];
         const emitidosMap = new Map<string, number>();
         const assinadosMap = new Map<string, number>();
@@ -453,14 +473,13 @@ export default function Home() {
           emitidos: emitidosMap.get(day) || 0,
           assinados: assinadosMap.get(day) || 0,
         }));
-        console.log('📊 [EA] Dados agregados:', result);
         setWeeklyEA(result);
       } catch (err) { console.error('Erro ao carregar dados semanais emitidos/assinados:', err); }
     };
     fetchWeeklyData();
   }, [isSpecialGroup, currentStartDate, currentEndDate, filters, getChartFilterParams]);
 
-  // Gráfico de performance semanal (leads, assinados, ganhos) - com UTC
+  // Gráfico de performance semanal (leads, assinados, ganhos)
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -469,15 +488,11 @@ export default function Home() {
         const { start, end } = getCurrentWeekDatesUTC();
         const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
         const commonParams = { start, end, equipe: equipeApi, colaborador: colaboradorApi, produto: produtoApi, granularity: 'daily' as const };
-        console.log('📡 [WD] Parâmetros:', commonParams);
         const [leadsData, assinadosData, ganhosData] = await Promise.all([
           fetchLeadsRecebidos(commonParams),
           fetchAssinados(commonParams),
           fetchGanhos(commonParams),
         ]);
-        console.log('📦 [WD] leadsData bruto:', leadsData);
-        console.log('📦 [WD] assinadosData bruto:', assinadosData);
-        console.log('📦 [WD] ganhosData bruto:', ganhosData);
 
         const weekdays = ['Seg','Ter','Qua','Qui','Sex'];
         const leadsMap = new Map<string, number>();
@@ -514,7 +529,6 @@ export default function Home() {
           assinados: assinadosMap.get(day) || 0,
           ganhos: ganhosMap.get(day) || 0,
         }));
-        console.log('📊 [WD] Dados agregados:', result);
         setWeeklyDetailed(result);
       } catch (err) { console.error('Erro ao carregar dados semanais detalhados:', err); }
     };
@@ -544,13 +558,10 @@ export default function Home() {
           produto: produtoApi,
           granularity: 'daily' as const,
         };
-        console.log('📡 [DD] Parâmetros diários:', commonParams);
         const [leadsData, assinadosData] = await Promise.all([
           fetchLeadsRecebidos(commonParams),
           fetchAssinados(commonParams),
         ]);
-        console.log('📦 [DD] leadsData diário:', leadsData);
-        console.log('📦 [DD] assinadosData diário:', assinadosData);
 
         const leadsMap = new Map<string, number>();
         leadsData.forEach((item: any) => {
@@ -596,7 +607,6 @@ export default function Home() {
             assinados: assinadosMap.get(formatted) || 0,
           };
         });
-        console.log('📊 [DD] Dados agregados diários:', chartData);
         setDailyChartData(chartData);
       } catch (err) {
         console.error('Erro ao carregar dados diários:', err);
