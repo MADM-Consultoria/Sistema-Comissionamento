@@ -98,7 +98,7 @@ export default function DashboardLayout({ children, title, subtitle }: Dashboard
   const shouldShowPeriodFilter = !HIDE_PERIOD_FILTER_PATHS.includes(location);
 
   const isCustomPeriod = period === 'Custom';
-  const dateInputDisabled = false;   // datas sempre editáveis
+  const dateInputDisabled = false;
 
   return (
     <div className="min-h-screen bg-[#f8f9fc] flex">
