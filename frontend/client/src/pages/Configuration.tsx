@@ -26,6 +26,9 @@ const EXCLUDED_TEAMS = [
 const isExcludedTeam = (teamName: string) => EXCLUDED_TEAMS.includes(teamName);
 type CicloPeriodo = 'diario' | 'semanal' | 'mensal';
 
+// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
 function formatMonthYear(dateStr: string): string {
   if (!dateStr || !/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) return '--';
   const [year, month] = dateStr.split('-');
@@ -672,12 +675,12 @@ export default function Configuration() {
         <div className="grid grid-cols-2 gap-3">
           <div className="madm-card p-3 text-center">
             <Users className="w-5 h-5 text-[#09175b] mx-auto mb-1" aria-hidden="true" />
-            <div className="text-xl font-black text-[#09175b]">{totalStats.totalColaboradores}</div>
+            <div className="text-xl font-black text-[#09175b]">{formatInt(totalStats.totalColaboradores)}</div>
             <div className="text-[10px] text-gray-500">Colaboradores</div>
           </div>
           <div className="madm-card p-3 text-center">
             <Award className="w-5 h-5 text-[#34a853] mx-auto mb-1" aria-hidden="true" />
-            <div className="text-xl font-black text-[#34a853]">{filteredEquipeConfigs.length}</div>
+            <div className="text-xl font-black text-[#34a853]">{formatInt(filteredEquipeConfigs.length)}</div>
             <div className="text-[10px] text-gray-500">Equipes</div>
           </div>
         </div>
@@ -794,7 +797,7 @@ export default function Configuration() {
                             </div>
                           ) : (
                             <div className="flex flex-col items-center">
-                              <span className="text-xs font-medium">{currentMeta.assinados}/{currentMeta.ganhos}</span>
+                              <span className="text-xs font-medium">{formatInt(currentMeta.assinados)}/{formatInt(currentMeta.ganhos)}</span>
                               <div className="w-12 mt-0.5 h-1 bg-gray-100 rounded-full overflow-hidden" aria-hidden="true">
                                 <div className="h-full bg-[#09175b] rounded-full" style={{ width: `${Math.min((collab.assinados / currentMeta.assinados) * 100, 100)}%` }} />
                               </div>
@@ -802,7 +805,7 @@ export default function Configuration() {
                           )}
                         </td>
                         <td className="px-4 py-2 text-center">
-                          <span className="text-sm font-bold text-[#09175b]">{ciclosCompletos}</span>
+                          <span className="text-sm font-bold text-[#09175b]">{formatInt(ciclosCompletos)}</span>
                         </td>
                         <td className="px-4 py-2 text-center">
                           {isEditingBonus ? (
@@ -865,27 +868,27 @@ export default function Configuration() {
                             <div className="grid grid-cols-5 gap-2 text-center">
                               <div className="bg-white rounded p-2">
                                 <FileText className="w-3 h-3 text-[#34a853] mx-auto mb-0.5" aria-hidden="true" />
-                                <div className="text-xs font-bold text-[#34a853]">{collab.emitidos}</div>
+                                <div className="text-xs font-bold text-[#34a853]">{formatInt(collab.emitidos)}</div>
                                 <div className="text-[9px] text-gray-400">Emitidos</div>
                               </div>
                               <div className="bg-white rounded p-2">
                                 <CheckCircle className="w-3 h-3 text-[#09175b] mx-auto mb-0.5" aria-hidden="true" />
-                                <div className="text-xs font-bold text-[#09175b]">{collab.assinados}</div>
+                                <div className="text-xs font-bold text-[#09175b]">{formatInt(collab.assinados)}</div>
                                 <div className="text-[9px] text-gray-400">Assinados</div>
                               </div>
                               <div className="bg-white rounded p-2">
                                 <Archive className="w-3 h-3 text-[#045b5b] mx-auto mb-0.5" aria-hidden="true" />
-                                <div className="text-xs font-bold text-[#045b5b]">{collab.protocolados || 0}</div>
+                                <div className="text-xs font-bold text-[#045b5b]">{formatInt(collab.protocolados || 0)}</div>
                                 <div className="text-[9px] text-gray-400">Protocolados</div>
                               </div>
                               <div className="bg-white rounded p-2">
                                 <Award className="w-3 h-3 text-[#34a853] mx-auto mb-0.5" aria-hidden="true" />
-                                <div className="text-xs font-bold text-[#34a853]">{collab.ganhos}</div>
+                                <div className="text-xs font-bold text-[#34a853]">{formatInt(collab.ganhos)}</div>
                                 <div className="text-[9px] text-gray-400">Ganhos</div>
                               </div>
                               <div className="bg-white rounded p-2">
                                 <XCircle className="w-3 h-3 text-red-500 mx-auto mb-0.5" aria-hidden="true" />
-                                <div className="text-xs font-bold text-red-500">{collab.perdidos}</div>
+                                <div className="text-xs font-bold text-red-500">{formatInt(collab.perdidos)}</div>
                                 <div className="text-[9px] text-gray-400">Perdidos</div>
                               </div>
                             </div>

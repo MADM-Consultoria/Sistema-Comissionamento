@@ -40,6 +40,11 @@ const isExcludedGroup = (group: string) =>
   EXCLUDED_GROUPS.some(g => normalize(g) === normalize(group));
 
 // ============================================================
+// FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS
+// ============================================================
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
+// ============================================================
 // TIPOS
 // ============================================================
 interface MetricDataPoint {
@@ -640,14 +645,14 @@ export default function Relatorio() {
                     <config.icon className="w-5 h-5" style={{ color: config.color }} aria-hidden="true" />
                     <span className="text-xs text-gray-500">{config.label}</span>
                   </div>
-                  <div className="text-2xl font-black text-gray-800">{total}</div>
+                  <div className="text-2xl font-black text-gray-800">{formatInt(total)}</div>
                   {target > 0 && (
                     <div className="mt-2">
                       <div className="madm-progress-bar" aria-label={`Progresso para meta de ${config.label}`}>
                         <div className="madm-progress-fill" style={{ width: `${Math.min(percent, 100)}%`, background: config.color }} />
                       </div>
                       <div className="flex justify-between text-[10px] text-gray-400 mt-1">
-                        <span>Meta: {Math.round(target)}</span>
+                        <span>Meta: {formatInt(Math.round(target))}</span>
                         <span>{percent.toFixed(0)}%</span>
                       </div>
                     </div>
@@ -664,7 +669,7 @@ export default function Relatorio() {
                 <TrendingUp className="w-5 h-5 text-[#34a853]" aria-hidden="true" />
                 <span className="text-xs text-gray-500">Metas Batidas</span>
               </div>
-              <div className="text-2xl font-black text-gray-800">{totalMetasBatidas}</div>
+              <div className="text-2xl font-black text-gray-800">{formatInt(totalMetasBatidas)}</div>
               <div className="text-[10px] text-gray-400 mt-1">Total de ciclos completos</div>
             </div>
           </div>
@@ -678,8 +683,8 @@ export default function Relatorio() {
               <BarChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" vertical={false} />
                 <XAxis dataKey="label" tick={{ fontSize: 10 }} height={60} angle={-30} textAnchor="end" />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={(value) => formatInt(value)} />
+                <Tooltip formatter={(value: any) => formatInt(value)} />
                 <Legend />
                 {selectedMetrics.map((metric) => (
                   <Bar key={metric} dataKey={metric} name={FULL_METRIC_CONFIG[metric].label} fill={FULL_METRIC_CONFIG[metric].color} radius={[4, 4, 0, 0]} />
@@ -704,8 +709,8 @@ export default function Relatorio() {
               <LineChart data={chartData}>
                 <CartesianGrid strokeDasharray="3 3" stroke="#f0f0f0" />
                 <XAxis dataKey="label" tick={{ fontSize: 11 }} />
-                <YAxis />
-                <Tooltip />
+                <YAxis tickFormatter={(value) => formatInt(value)} />
+                <Tooltip formatter={(value: any) => formatInt(value)} />
                 <Legend />
                 {selectedMetrics.map((metric) => (
                   <Line key={metric} type="monotone" dataKey={metric} name={FULL_METRIC_CONFIG[metric].label} stroke={FULL_METRIC_CONFIG[metric].color} strokeWidth={2} dot={{ r: 3 }} />
@@ -750,16 +755,16 @@ export default function Relatorio() {
                       <tr key={idx} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="px-4 py-2 font-mono text-xs text-gray-800">{row.label}</td>
                         {selectedMetrics.map(metric => (
-                          <td key={metric} className="px-4 py-2 text-gray-700">{row[metric] || 0}</td>
+                          <td key={metric} className="px-4 py-2 text-gray-700">{formatInt(row[metric] || 0)}</td>
                         ))}
-                        <td className="px-4 py-2 font-semibold text-[#09175b]">{getRowMetasBatidas(row)}</td>
+                        <td className="px-4 py-2 font-semibold text-[#09175b]">{formatInt(getRowMetasBatidas(row))}</td>
                       </tr>
                     ))
                   )}
                 </tbody>
               </table>
             </div>
-            <div className="text-xs text-gray-400 mt-3 text-right">Total de registros: {chartData.length}</div>
+            <div className="text-xs text-gray-400 mt-3 text-right">Total de registros: {formatInt(chartData.length)}</div>
           </div>
         </>
       )}

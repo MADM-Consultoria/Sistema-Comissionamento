@@ -15,6 +15,9 @@ import {
 
 type PeriodoMeta = 'diario' | 'semanal' | 'mensal';
 
+// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
 // Equipes e grupos que não devem aparecer nos cálculos de comissão
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
@@ -261,21 +264,23 @@ export default function Comissoes() {
     return null;
   };
 
-  // Cartões de resumo – "Vendas Fechadas" usa rawMetrics.assinados e formatação sem separador de milhar
+  // Cartões de resumo – todos os números inteiros formatados com separador
   const summaryCards = [
     {
       label: "Comissão Total Estimada", value: totals.comissao, icon: DollarSign,
       color: "#09175b", bg: "#eff6ff", sub: "Soma das comissões diária, semanal e mensal",
+      isCurrency: true,
     },
     {
       label: "Metas Batidas (Total)", value: totals.ciclos, icon: Award,
       color: "#34a853", bg: "#f0fdf4", sub: "Diário + Semanal + Mensal",
+      isInteger: true,
     },
     {
       label: "Vendas Fechadas",
       value: rawMetrics.assinados, icon: FileCheck, color: "#f59e0b", bg: "#fffbeb",
       sub: "Total de assinados no período",
-      plainNumber: true,                     // sinalizador para evitar separador de milhar
+      isInteger: true,
     },
     {
       label: "Progresso Médio", value: avgProgress, icon: Target,
@@ -338,13 +343,17 @@ export default function Comissoes() {
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             {summaryCards.map((card, idx) => {
               const Icon = card.icon;
-              const displayValue = card.isPercent
-                ? `${card.value.toFixed(1)}%`
-                : (card as any).plainNumber
-                ? card.value.toString()            // ex.: "1500" sem vírgula
-                : card.label.includes("R$") || card.label.includes("Comissão")
-                ? formatCurrency(card.value)
-                : card.value.toLocaleString();
+              let displayValue: string;
+              if (card.isPercent) {
+                displayValue = `${card.value.toFixed(1)}%`;
+              } else if (card.isCurrency) {
+                displayValue = formatCurrency(card.value);
+              } else if (card.isInteger) {
+                displayValue = formatInt(card.value);
+              } else {
+                // fallback
+                displayValue = String(card.value);
+              }
               return (
                 <div key={card.label} className="madm-card p-5 animate-fade-in-up" style={{ animationDelay: `${idx * 80}ms` }}>
                   <div className="flex items-center gap-3 mb-3">
@@ -402,7 +411,7 @@ export default function Comissoes() {
                           <div className="flex justify-between text-sm mb-1">
                             <span className="font-medium text-gray-700 truncate">{item.name}</span>
                             <span className="text-gray-500 text-xs ml-2">
-                              {item.assinados}/{item.metaAssinados} A {showGanhos && `| ${item.ganhos}/${item.metaGanhos} G`}
+                              {formatInt(item.assinados)}/{formatInt(item.metaAssinados)} A {showGanhos && `| ${formatInt(item.ganhos)}/${formatInt(item.metaGanhos)} G`}
                               {item.isSpecial && <span className="text-blue-500 ml-1">(só A)</span>}
                             </span>
                           </div>
@@ -419,10 +428,10 @@ export default function Comissoes() {
                         <span className="text-sm font-bold text-[#09175b] w-18 text-right">{formatCurrency(item.totalCommission)}</span>
                       </div>
                       <div className="text-xs text-gray-500 ml-11 mt-0.5">
-                        Metas batidas (total): <span className="font-semibold text-[#09175b]">{item.totalCycles}</span>
+                        Metas batidas (total): <span className="font-semibold text-[#09175b]">{formatInt(item.totalCycles)}</span>
                         {item.periodDetails && (
                           <span className="text-gray-400 ml-1">
-                            (D: {item.periodDetails.diario?.cycles || 0}, S: {item.periodDetails.semanal?.cycles || 0}, M: {item.periodDetails.mensal?.cycles || 0})
+                            (D: {formatInt(item.periodDetails.diario?.cycles || 0)}, S: {formatInt(item.periodDetails.semanal?.cycles || 0)}, M: {formatInt(item.periodDetails.mensal?.cycles || 0)})
                           </span>
                         )}
                       </div>
