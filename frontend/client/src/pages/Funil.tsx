@@ -67,6 +67,9 @@ const productToGroup: Record<string, string | string[] | undefined> = {
   "Concomitante": "Concomitante",
 };
 
+// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
 function ConversionArrow({ from, to }: { from: number; to: number }) {
   const rate = from > 0 ? ((to / from) * 100).toFixed(1) : "0";
   const isGood = parseFloat(rate) >= 60;
@@ -91,7 +94,7 @@ const CustomTooltip = ({ active, payload }: any) => {
     return (
       <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg text-xs">
         <p className="font-semibold text-gray-700">{payload[0].payload.etapa_lead || payload[0].payload.stage}</p>
-        <p className="font-bold text-[#09175b] text-sm">{payload[0].value}</p>
+        <p className="font-bold text-[#09175b] text-sm">{formatInt(payload[0].value)}</p>
       </div>
     );
   }
@@ -480,7 +483,7 @@ export default function Funil() {
                   <div className="w-8 h-8 rounded-lg flex items-center justify-center mx-auto mb-2" style={{ background: `${color}15` }}>
                     <Icon className="w-4 h-4" style={{ color }} />
                   </div>
-                  <div className="madm-kpi-value text-xl" style={{ color }}>{stage.count}</div>
+                  <div className="madm-kpi-value text-xl" style={{ color }}>{formatInt(stage.count)}</div>
                   <div className="text-[10px] text-gray-500 mt-0.5 font-medium">{stage.stage}</div>
                   <div className="text-[10px] text-gray-400 mt-0.5">{pct}% do total</div>
                 </div>
@@ -516,7 +519,7 @@ export default function Funil() {
                           </span>
                         </div>
                         <span className="text-xs sm:text-sm font-black flex-shrink-0" style={{ color }}>
-                          {stage.count}
+                          {formatInt(stage.count)}
                         </span>
                       </div>
                       {nextStage && nextStage.stage !== "Perdidos" && (
@@ -607,10 +610,10 @@ export default function Funil() {
                     {collaboratorStageSummary.map((item) => (
                       <tr key={item.colaborador} className="border-b border-gray-50 hover:bg-gray-50/50">
                         <td className="px-5 py-3 text-sm font-medium text-gray-800">{item.colaborador}</td>
-                        <td className="px-5 py-3 text-sm font-bold text-[#09175b]">{item.totalLeads}</td>
+                        <td className="px-5 py-3 text-sm font-bold text-[#09175b]">{formatInt(item.totalLeads)}</td>
                         {Array.from(new Set(leadsStageData.map(d => d.etapa_lead || "Sem etapa"))).sort().map(etapa => (
                           <td key={etapa} className="px-2 py-3 text-center text-sm text-gray-600">
-                            {item.stages[etapa] || 0}
+                            {formatInt(item.stages[etapa] || 0)}
                           </td>
                         ))}
                       </tr>

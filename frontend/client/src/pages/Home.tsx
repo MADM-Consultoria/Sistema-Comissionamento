@@ -124,6 +124,9 @@ function countWeekdaysUTC(startDate: string, endDate: string): number {
   return count;
 }
 
+// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
 // ========== OUTROS HOOKS E FUNÇÕES ==========
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0);
@@ -171,7 +174,12 @@ function KpiCard({
   const displayValue = () => {
     if (unit === "R$") return formatCurrency(animated);
     if (unit === "%") return `${animated.toFixed(1)}%`;
-    return animated.toString();
+    return formatInt(animated);
+  };
+  const displayTarget = () => {
+    if (unit === "R$") return formatCurrency(target);
+    if (unit === "%") return `${target}%`;
+    return formatInt(target);
   };
   return (
     <div className="madm-card p-5 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
@@ -195,10 +203,10 @@ function KpiCard({
           </div>
           <div className="flex justify-between mt-1.5">
             <span className="text-[10px] text-gray-400">
-              Meta: {unit === "R$" ? formatCurrency(target) : unit === "%" ? `${target}%` : target}
+              Meta: {displayTarget()}
             </span>
             <span className="text-[10px] font-medium" style={{ color: pct >= 100 ? "#34a853" : "#09175b" }}>
-              {pct >= 100 ? "✓ Atingida" : unit === "R$" ? `Faltam ${formatCurrency(target - value)}` : unit === "%" ? `Faltam ${(target - value).toFixed(1)}%` : `Faltam ${target - value}`}
+              {pct >= 100 ? "✓ Atingida" : unit === "R$" ? `Faltam ${formatCurrency(target - value)}` : unit === "%" ? `Faltam ${(target - value).toFixed(1)}%` : `Faltam ${formatInt(target - value)}`}
             </span>
           </div>
         </>
@@ -213,7 +221,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
       <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg text-xs">
         <p className="font-semibold text-gray-700 mb-1">{label}</p>
         {payload.map((entry: any, i: number) => (
-          <p key={i} style={{ color: entry.color }} className="font-medium">{entry.name}: {entry.value}</p>
+          <p key={i} style={{ color: entry.color }} className="font-medium">
+            {entry.name}: {typeof entry.value === 'number' ? formatInt(entry.value) : entry.value}
+          </p>
         ))}
       </div>
     );
@@ -745,23 +755,23 @@ export default function Home() {
               <div className={`grid ${isSpecialGroup ? 'grid-cols-1' : 'grid-cols-2'} gap-4 w-full mt-6`}>
                 <div className="text-center">
                   <div className="text-xs text-gray-500 mb-1">📄 Assinados</div>
-                  <div className="text-2xl font-black text-[#09175b]">{totals.assinados}<span className="text-sm font-normal text-gray-400">/{totalTargetAssinados}</span></div>
+                  <div className="text-2xl font-black text-[#09175b]">{formatInt(totals.assinados)}<span className="text-sm font-normal text-gray-400">/{formatInt(totalTargetAssinados)}</span></div>
                 </div>
                 {!isSpecialGroup && (
                   <div className="text-center">
                     <div className="text-xs text-gray-500 mb-1">🏆 Ganhos</div>
-                    <div className="text-2xl font-black text-[#34a853]">{totals.ganhos}<span className="text-sm font-normal text-gray-400">/{totalTargetGanhos}</span></div>
+                    <div className="text-2xl font-black text-[#34a853]">{formatInt(totals.ganhos)}<span className="text-sm font-normal text-gray-400">/{formatInt(totalTargetGanhos)}</span></div>
                   </div>
                 )}
               </div>
               <div className="mt-4 text-center">
-                <div className="text-3xl font-black text-[#09175b]">{totalMetasBatidas}</div>
+                <div className="text-3xl font-black text-[#09175b]">{formatInt(totalMetasBatidas)}</div>
                 <div className="text-xs text-gray-500">metas batidas</div>
               </div>
               <div className="mt-4 w-full">
                 <div className="rounded-lg p-3 text-center" style={{ background: goalProgress >= 70 ? "#f0fdf4" : "#eff6ff" }}>
                   <p className="text-xs font-semibold" style={{ color: goalProgress >= 70 ? "#34a853" : "#09175b" }}>
-                    {goalProgress >= 100 ? "🎯 Meta atingida! Parabéns!" : `💪 Faltam ${Math.max(0, totalTargetAssinados - totals.assinados)} assinado(s)` + (!isSpecialGroup && totalTargetGanhos > 0 ? ` e ${Math.max(0, totalTargetGanhos - totals.ganhos)} ganho(s)` : '') + ' para atingir a meta'}
+                    {goalProgress >= 100 ? "🎯 Meta atingida! Parabéns!" : `💪 Faltam ${formatInt(Math.max(0, totalTargetAssinados - totals.assinados))} assinado(s)` + (!isSpecialGroup && totalTargetGanhos > 0 ? ` e ${formatInt(Math.max(0, totalTargetGanhos - totals.ganhos))} ganho(s)` : '') + ' para atingir a meta'}
                   </p>
                 </div>
               </div>
@@ -819,13 +829,13 @@ export default function Home() {
                 <div className="mt-4 pt-3 border-t border-gray-100">
                   <div className="grid grid-cols-2 gap-4 text-xs">
                     <div>
-                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total de vendas:</span><span className="font-bold text-[#09175b]">{stats.totalAssinados}</span></div>
+                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total de vendas:</span><span className="font-bold text-[#09175b]">{formatInt(stats.totalAssinados)}</span></div>
                       <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Performance Assinados:</span><span className={cn("font-bold", stats.performanceAssinados >= 100 ? "text-[#34a853]" : "text-[#f59e0b]")}>{Math.round(stats.performanceAssinados)}%</span></div>
                       <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Performance Ganhos:</span><span className={cn("font-bold", stats.performanceGanhos >= 100 ? "text-[#34a853]" : "text-[#f59e0b]")}>{Math.round(stats.performanceGanhos)}%</span></div>
                       <div className="flex justify-between items-center"><span className="text-gray-500">Média diária (ganhos):</span><span className="font-medium text-gray-700">{stats.avgGanhos.toFixed(2)}</span></div>
                     </div>
                     <div>
-                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Melhor dia (assinados):</span><span className="font-medium text-gray-700">{stats.bestDay.day} ({stats.bestDay.value})</span></div>
+                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Melhor dia (assinados):</span><span className="font-medium text-gray-700">{stats.bestDay.day} ({formatInt(stats.bestDay.value)})</span></div>
                       <div className="flex justify-between items-center"><span className="text-gray-500">Dias com meta batida:</span><span className="font-medium text-[#34a853]">{stats.daysWithMeta}/{stats.totalDays}</span></div>
                     </div>
                   </div>
@@ -835,8 +845,8 @@ export default function Home() {
                 <div className="mt-4 pt-3 border-t border-gray-100">
                   <div className="grid grid-cols-2 gap-4 text-xs">
                     <div>
-                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total emitidos:</span><span className="font-bold text-[#09175b]">{weeklyEA.reduce((acc,d) => acc+d.emitidos, 0)}</span></div>
-                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total assinados:</span><span className="font-bold text-[#34a853]">{weeklyEA.reduce((acc,d) => acc+d.assinados, 0)}</span></div>
+                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total emitidos:</span><span className="font-bold text-[#09175b]">{formatInt(weeklyEA.reduce((acc,d) => acc+d.emitidos, 0))}</span></div>
+                      <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Total assinados:</span><span className="font-bold text-[#34a853]">{formatInt(weeklyEA.reduce((acc,d) => acc+d.assinados, 0))}</span></div>
                     </div>
                     <div>
                       <div className="flex justify-between items-center mb-2"><span className="text-gray-500">Taxa conversão:</span><span className="font-bold text-[#09175b]">{Math.round((weeklyEA.reduce((acc,d) => acc+d.assinados, 0) / (weeklyEA.reduce((acc,d) => acc+d.emitidos, 0) || 1)) * 100)}%</span></div>
@@ -888,7 +898,7 @@ export default function Home() {
               </div>
               <div className="space-y-2">
                 <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Posição acima</span><span className="font-semibold text-[#09175b]">{aboveUser?.name || "—"}</span></div>
-                <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Diferença</span><span className="font-semibold text-red-500">{diffVendas > 0 ? `-${diffVendas} vendas` : "—"}</span></div>
+                <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Diferença</span><span className="font-semibold text-red-500">{diffVendas > 0 ? `-${formatInt(diffVendas)} vendas` : "—"}</span></div>
                 <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Posição abaixo</span><span className="font-semibold text-[#34a853]">{belowUser?.name || "—"}</span></div>
               </div>
               {canAccessReports && <Link href="/ranking"><button className="mt-4 w-full py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all hover:opacity-90" style={{ background: "#09175b", color: "white" }}>Ver Ranking Completo <ArrowRight className="w-3.5 h-3.5" /></button></Link>}
