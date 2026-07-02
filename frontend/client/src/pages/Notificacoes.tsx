@@ -188,7 +188,7 @@ export default function Notificacoes() {
               </div>
             </div>
             <div>
-              <label htmlFor="notif-message" className="block text-xs font-medium text-gray-600 mb-1">Mensagem</label>
+              <label htmlFor="notif-message" className="block text-xs font-medium text-gray-600 mb-1">Descricao</label>
               <textarea id="notif-message" value={message} onChange={(e) => setMessage(e.target.value)} rows={3}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200" placeholder="Conteúdo da notificação" title="Conteúdo da notificação" />
             </div>
