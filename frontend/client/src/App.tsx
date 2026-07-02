@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -15,14 +15,27 @@ import Ranking from "./pages/Ranking";
 import Relatorio from "./pages/Relatorio";
 import Notificacoes from "./pages/Notificacoes";
 import Configuration from "./pages/Configuration";
+import Suporte from "./pages/Suporte";
 import Login from "./pages/Login";
 import Verify2FA from "./pages/ResetPassword/Verify2FA";
 import ProtectedRoute from "./components/ProtectedRoute";
 import ForgotPassword from "./pages/ResetPassword/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword/ResetPassword";
-import Suporte from "./pages/Suporte";
 import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
+import { Loader2 } from "lucide-react";
+
+function startHeartbeat(): NodeJS.Timeout {
+  const interval = setInterval(async () => {
+    try {
+      await fetch(`${API_BASE}/auth/ping`, {
+        credentials: 'include',
+        headers: { 'x-csrf-token': localStorage.getItem('csrfToken') || '' },
+      });
+    } catch (_) { /* ignore */ }
+  }, 5 * 60 * 1000);
+  return interval;
+}
 
 function Router() {
   return (
@@ -96,7 +109,7 @@ function Router() {
           <ProtectedRoute>
             <Suporte />
           </ProtectedRoute>
-        </PeriodProvider> 
+        </PeriodProvider>
       </Route>
       <Route path="/relatorio">
         <PeriodProvider>
@@ -110,63 +123,119 @@ function Router() {
   );
 }
 
-function App() {
+export default function App() {
   const { currentUser, setCurrentUser } = useAppStore();
+  const [appLoading, setAppLoading] = useState(true);
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
 
-  // ===== 1. BUSCAR TOKEN CSRF AO MONTAR =====
+  // Busca token CSRF
   useEffect(() => {
-    const fetchCsrfToken = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
-        const data = await res.json();
+    fetch(`${API_BASE}/csrf-token`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
         if (data.csrfToken && data.csrfToken !== 'disabled') {
           localStorage.setItem('csrfToken', data.csrfToken);
         }
-      } catch (err) {
-        console.warn('Não foi possível obter token CSRF:', err);
-      }
-    };
-    fetchCsrfToken();
+      })
+      .catch(() => {});
   }, []);
 
-  // ===== 2. VERIFICAR SESSÃO ATIVA AO CARREGAR =====
+  // Verifica sessão
   useEffect(() => {
+    let isMounted = true;
+    let timeoutId: NodeJS.Timeout | null = null;
+
     const checkSession = async () => {
       try {
-        const res = await fetch(`${API_BASE}/auth/me`, {
-          credentials: 'include',
-        });
+        console.log('🔐 [App] Verificando sessão...');
+        const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
+
+        if (!res.ok) {
+          console.log('ℹ️ [App] Sessão não encontrada (status:', res.status, ')');
+          if (isMounted) {
+            setCurrentUser(null);
+            setIsAuthenticated(false);
+            setAppLoading(false);
+          }
+          return;
+        }
+
         const data = await res.json();
-        if (data.success && data.user) {
-          setCurrentUser(data.user);
-          console.log('✅ Sessão restaurada:', data.user.name);
+        console.log('📦 [App] Resposta /auth/me:', data);
+
+        if (data.success && data.user && data.user.id) {
+          console.log('✅ [App] Sessão restaurada para:', data.user.name);
+          if (isMounted) {
+            setCurrentUser(data.user);
+            setIsAuthenticated(true);
+          }
+        } else {
+          console.log('ℹ️ [App] Sessão inválida ou incompleta');
+          if (isMounted) {
+            setCurrentUser(null);
+            setIsAuthenticated(false);
+          }
         }
       } catch (err) {
-        // Sessão não ativa – ignora
-        console.log('ℹ️ Nenhuma sessão ativa');
+        console.error('❌ [App] Erro na verificação de sessão:', err);
+        if (isMounted) {
+          setCurrentUser(null);
+          setIsAuthenticated(false);
+        }
+      } finally {
+        if (isMounted) setAppLoading(false);
       }
     };
-    checkSession();
-  }, [setCurrentUser]);
 
-  // ===== 3. ATUALIZAR TOKEN CSRF APÓS LOGIN =====
+    checkSession();
+
+    // Timeout de segurança: se demorar mais de 5 segundos, força finalização
+    timeoutId = setTimeout(() => {
+      if (isMounted && appLoading) {
+        console.warn('⏱️ [App] Timeout de segurança (5s): forçando fim do carregamento');
+        setCurrentUser(null);
+        setIsAuthenticated(false);
+        setAppLoading(false);
+      }
+    }, 5000);
+
+    return () => {
+      isMounted = false;
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+  }, []); // executa apenas uma vez
+
+  // Heartbeat para manter a sessão ativa
   useEffect(() => {
     if (!currentUser) return;
+    const interval = startHeartbeat();
+    return () => clearInterval(interval);
+  }, [currentUser]);
 
-    const refreshCsrfToken = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/csrf-token`, { credentials: 'include' });
-        const data = await res.json();
+  // Atualiza token CSRF após login
+  useEffect(() => {
+    if (!currentUser) return;
+    fetch(`${API_BASE}/csrf-token`, { credentials: 'include' })
+      .then(res => res.json())
+      .then(data => {
         if (data.csrfToken && data.csrfToken !== 'disabled') {
           localStorage.setItem('csrfToken', data.csrfToken);
         }
-      } catch (err) {
-        console.error('Erro ao atualizar token CSRF:', err);
-      }
-    };
-    refreshCsrfToken();
+      })
+      .catch(() => {});
   }, [currentUser]);
 
+  // Enquanto estiver carregando, exibe loader
+  if (appLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+        <span className="ml-2 text-gray-500">Carregando sistema...</span>
+      </div>
+    );
+  }
+
+  // Renderiza o roteador
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
@@ -178,5 +247,3 @@ function App() {
     </ErrorBoundary>
   );
 }
-
-export default App;

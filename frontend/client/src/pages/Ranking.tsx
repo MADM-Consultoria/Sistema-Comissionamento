@@ -3,22 +3,30 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import DashboardLayout from "@/components/DashboardLayout";
 import { useAppStore } from "@/lib/dataStore";
 import {
-  Trophy, Star, Crown, Medal, ArrowUp, ArrowDown, Minus,
+  Trophy, Star, Crown, Medal,
   FileText, CheckCircle, Award, Users, User, Package, Briefcase, Loader2, RefreshCw, TrendingUp,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { 
+  fetchCollaborators, 
+  fetchEmitidos, 
+  fetchAssinados, 
+  fetchProtocolados, 
+  fetchGanhos, 
+  fetchPerdidos 
+} from "@/lib/api";
 
 const RANKING_BG =
   "https://d2xsxph8kpxj0f.cloudfront.net/310519663539696960/XjeLEb8phavPWoPR3fCUmm/madm-ranking-bg-ducCAYN4wgdYBLEESvf2bZ.webp";
 
 // ============================================================
-// CONFIGURAÇÃO DE PESOS (ajustado: emitidos=2, protocolados=1)
+// CONFIGURAÇÃO DE PESOS
 // ============================================================
 const WEIGHTS: Record<SortMetric, number> = {
   ganhos: 4,
   assinados: 3,
-  protocolados: 1,   // antes era 2
-  emitidos: 2,       // antes era 1
+  protocolados: 1,
+  emitidos: 2,
 };
 
 // ============================================================
@@ -83,9 +91,6 @@ const isDesativado = (c: any) => {
   return grupo === 'desativado' || equipe.includes('desativado');
 };
 
-// ============================================================
-// FUNÇÕES AUXILIARES
-// ============================================================
 const teamToProductMapping: Record<string, string> = {
   "Equipe Concomitante": "Concomitante",
   "Equipe Quinquenio": "Quinquenio",
@@ -121,9 +126,6 @@ function RankBadge({ position }: { position: number }) {
   );
 }
 
-/**
- * Calcula a pontuação ponderada com base nos pesos e nas métricas ativas.
- */
 function calculateWeightedScore(
   item: { ganhos: number; assinados: number; protocolados: number; emitidos: number },
   activeMetrics: SortMetric[]
@@ -137,41 +139,31 @@ function calculateWeightedScore(
   return score;
 }
 
-/**
- * Função de comparação: primeiro por score ponderado, depois pelos critérios de desempate
- * (ganhos, assinados, protocolados, emitidos) na ordem em que aparecem.
- */
 function compareByScore(
   a: { ganhos: number; assinados: number; protocolados: number; emitidos: number; score: number },
   b: { ganhos: number; assinados: number; protocolados: number; emitidos: number; score: number },
   activeMetrics: SortMetric[]
 ): number {
-  // 1º critério: score ponderado
   if (a.score !== b.score) return b.score - a.score;
-
-  // Desempate: ganhos
   if (a.ganhos !== b.ganhos) return b.ganhos - a.ganhos;
-  // depois assinados
   if (a.assinados !== b.assinados) return b.assinados - a.assinados;
-  // depois protocolados
   if (a.protocolados !== b.protocolados) return b.protocolados - a.protocolados;
-  // depois emitidos
   if (a.emitidos !== b.emitidos) return b.emitidos - a.emitidos;
   return 0;
 }
+
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
 
 export default function Ranking() {
   const {
     currentStartDate,
     currentEndDate,
-    collaborators,
     equipeConfigs,
     currentUser,
-    loadCollaboratorsAndMetrics,
-    loadWeeklyPerformanceData,
-    loadRawMetrics,
   } = useAppStore();
 
+  const [allCollaborators, setAllCollaborators] = useState<any[]>([]);
+  const [metricsData, setMetricsData] = useState<Record<string, { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number }>>({});
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [rankingType, setRankingType] = useState<RankingType>("colaborador");
@@ -184,24 +176,73 @@ export default function Ranking() {
   const initialLoadDone = useRef(false);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
   const lastFiltersRef = useRef({ product: selectedProduct, team: selectedTeam, type: rankingType });
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
 
-  // ========== Função de recarga ==========
-  const reloadData = useCallback(async (showRefreshing = false) => {
+  const loadAllData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
-      await loadCollaboratorsAndMetrics(undefined, undefined, undefined, undefined);
-      await loadRawMetrics();
-      await loadWeeklyPerformanceData();
-    } catch (err) {
-      console.error("Erro ao recarregar dados do Ranking:", err);
-    } finally {
-      if (showRefreshing) setRefreshing(false);
-    }
-  }, [loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
+      const collabs = await fetchCollaborators();
+      if (!collabs || collabs.length === 0) {
+        setAllCollaborators([]);
+        setMetricsData({});
+        return;
+      }
 
-  // ========== Carregamento inicial ==========
+      if (!currentStartDate || !currentEndDate) {
+        setAllCollaborators(collabs);
+        setMetricsData({});
+        return;
+      }
+
+      const endInclusive = new Date(currentEndDate + "T23:59:59");
+      const endExclusive = new Date(endInclusive);
+      endExclusive.setDate(endExclusive.getDate() + 1);
+      const endParam = endExclusive.toISOString().slice(0, 10);
+      const params = { start: currentStartDate, end: endParam };
+
+      const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
+        fetchEmitidos(params),
+        fetchAssinados(params),
+        fetchProtocolados(params),
+        fetchGanhos(params),
+        fetchPerdidos(params),
+      ]);
+
+      const metricsMap: Record<string, { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number }> = {};
+      const aggregate = (data: any[], key: keyof typeof metricsMap[string]) => {
+        data.forEach((item: any) => {
+          const name = item.colaborador;
+          if (!name) return;
+          if (!metricsMap[name]) {
+            metricsMap[name] = { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
+          }
+          metricsMap[name][key] += Number(item.total) || 0;
+        });
+      };
+      aggregate(emitidos, 'emitidos');
+      aggregate(assinados, 'assinados');
+      aggregate(protocolados, 'protocolados');
+      aggregate(ganhos, 'ganhos');
+      aggregate(perdidos, 'perdidos');
+
+      setAllCollaborators(collabs);
+      setMetricsData(metricsMap);
+    } catch (err) {
+      console.error('Erro ao carregar dados do ranking:', err);
+    } finally {
+      if (showRefreshing && isMountedRef.current) setRefreshing(false);
+    }
+  }, [currentStartDate, currentEndDate]);
+
+  // ========== CARREGAMENTO INICIAL ==========
   useEffect(() => {
-    if (!currentStartDate || !currentEndDate) return;
+    isMountedRef.current = true;
+    if (!currentStartDate || !currentEndDate) {
+      setLoading(false);
+      return;
+    }
+
     const datesChanged =
       currentStartDate !== lastDatesRef.current.start ||
       currentEndDate !== lastDatesRef.current.end;
@@ -210,41 +251,62 @@ export default function Ranking() {
       selectedTeam !== lastFiltersRef.current.team ||
       rankingType !== lastFiltersRef.current.type;
 
-    if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
+    if (initialLoadDone.current && !datesChanged && !filtersChanged) {
+      setLoading(false);
+      return;
+    }
 
     lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
     lastFiltersRef.current = { product: selectedProduct, team: selectedTeam, type: rankingType };
 
+    // Timeout de segurança
+    if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    timeoutIdRef.current = setTimeout(() => {
+      if (isMountedRef.current && loading) {
+        console.warn("⏱️ Ranking: timeout de segurança forçando fim do loading");
+        setLoading(false);
+      }
+    }, 15000);
+
     const load = async () => {
       setLoading(true);
       try {
-        await reloadData(false);
+        await loadAllData(false);
         initialLoadDone.current = true;
       } catch (err) {
         console.error("Erro ao carregar dados do ranking:", err);
       } finally {
-        setLoading(false);
+        if (isMountedRef.current) {
+          setLoading(false);
+          if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+        }
       }
     };
-    load();
-  }, [currentStartDate, currentEndDate, selectedProduct, selectedTeam, rankingType, reloadData]);
 
-  // ========== Polling ==========
+    load();
+
+    return () => {
+      isMountedRef.current = false;
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    };
+  }, [currentStartDate, currentEndDate, selectedProduct, selectedTeam, rankingType, loadAllData, loading]);
+
+  // ========== POLLING ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
     const refresh = async () => {
       if (refreshing) return;
-      if (document.visibilityState === 'visible') {
-        await reloadData(true);
+      if (document.visibilityState === 'visible' && isMountedRef.current) {
+        await loadAllData(true);
       }
     };
 
     const intervalId = setInterval(refresh, 300000);
     return () => clearInterval(intervalId);
-  }, [currentStartDate, currentEndDate, reloadData, refreshing]);
+  }, [currentStartDate, currentEndDate, loadAllData, refreshing]);
 
-  // ========== Filtros ==========
+  // ========== FILTROS ==========
   const productToGroup: Record<string, string | string[] | undefined> = {
     Todos: undefined,
     "Auxilio Acidente": "Elite",
@@ -272,14 +334,15 @@ export default function Ranking() {
     }
   }, [selectedTeam]);
 
-  // ========== Colaboradores elegíveis ==========
+  // ========== COLABORADORES ELEGÍVEIS ==========
   const rankingCollaborators = useMemo(() => {
-    let filtered = collaborators.filter(c => {
+    let filtered = allCollaborators.filter(c => {
       if (isDesativado(c)) return false;
       if (isExcludedGroup(c.grupo)) return false;
       if (isExcludedTeam(c.equipeNome)) return false;
       return true;
     });
+
     if (selectedProduct !== "Todos") {
       const group = productToGroup[selectedProduct];
       if (group) {
@@ -290,25 +353,28 @@ export default function Ranking() {
         }
       }
     }
+
     if (rankingType === "colaborador" && selectedTeam !== "todas") {
       filtered = filtered.filter(c => c.equipeNome === selectedTeam);
     }
+
     return filtered;
-  }, [collaborators, selectedProduct, rankingType, selectedTeam]);
+  }, [allCollaborators, selectedProduct, rankingType, selectedTeam]);
 
   // ========== RANKING INDIVIDUAL ==========
   const individualRanking = useMemo(() => {
     let items: RankingItem[] = rankingCollaborators.map((colab) => {
+      const metrics = metricsData[colab.name] || { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
       const base = {
         id: colab.id,
         name: colab.name,
-        emitidos: Number(colab.emitidos) || 0,
-        assinados: Number(colab.assinados) || 0,
-        protocolados: Number(colab.protocolados) || 0,
-        ganhos: Number(colab.ganhos) || 0,
+        emitidos: metrics.emitidos || 0,
+        assinados: metrics.assinados || 0,
+        protocolados: metrics.protocolados || 0,
+        ganhos: metrics.ganhos || 0,
         avatar: colab.avatar || colab.name.charAt(0).toUpperCase(),
         trend: "same" as const,
-        isCurrentUser: colab.id === currentUser?.id,
+        isCurrentUser: colab.id === currentUser?.id || colab.name === currentUser?.name,
         equipe: colab.equipeNome,
       };
       const score = calculateWeightedScore(base, activeSortMetrics);
@@ -316,7 +382,7 @@ export default function Ranking() {
     });
     items.sort((a, b) => compareByScore(a, b, activeSortMetrics));
     return items.map((item, idx) => ({ ...item, position: idx + 1 }));
-  }, [rankingCollaborators, currentUser, activeSortMetrics]);
+  }, [rankingCollaborators, metricsData, currentUser, activeSortMetrics]);
 
   // ========== RANKING DE EQUIPES ==========
   const teamRanking = useMemo(() => {
@@ -331,10 +397,11 @@ export default function Ranking() {
         teamsMap.set(equipe, { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, members: [] });
       }
       const team = teamsMap.get(equipe)!;
-      team.emitidos += Number(collab.emitidos) || 0;
-      team.assinados += Number(collab.assinados) || 0;
-      team.protocolados += Number(collab.protocolados) || 0;
-      team.ganhos += Number(collab.ganhos) || 0;
+      const metrics = metricsData[collab.name] || { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
+      team.emitidos += metrics.emitidos || 0;
+      team.assinados += metrics.assinados || 0;
+      team.protocolados += metrics.protocolados || 0;
+      team.ganhos += metrics.ganhos || 0;
       team.members.push(collab.name);
     });
     let teamItems: TeamRankingItem[] = Array.from(teamsMap.entries()).map(([name, data]) => {
@@ -353,7 +420,7 @@ export default function Ranking() {
     });
     teamItems.sort((a, b) => compareByScore(a, b, activeSortMetrics));
     return teamItems.map((item, idx) => ({ ...item, position: idx + 1 }));
-  }, [rankingCollaborators, activeSortMetrics]);
+  }, [rankingCollaborators, metricsData, activeSortMetrics]);
 
   const activeRanking = rankingType === "colaborador" ? individualRanking : teamRanking;
   const top3 = activeRanking.slice(0, 3);
@@ -367,21 +434,11 @@ export default function Ranking() {
     return teamRanking.find((team) => team.name === currentUser.equipe);
   }, [rankingType, teamRanking, currentUser]);
 
-  const positionsToTop = myIndividualRank
-    ? myIndividualRank.position - 1
-    : myTeamRank
-    ? myTeamRank.position - 1
-    : 0;
-
-  const currentUserData = useMemo(() => {
-    if (!currentUser?.id) return null;
-    return collaborators.find(c => c.id === currentUser.id);
-  }, [collaborators, currentUser]);
-
-  const myEmitidos = currentUserData?.emitidos || 0;
-  const myAssinados = currentUserData?.assinados || 0;
-  const myProtocolados = currentUserData?.protocolados || 0;
-  const myGanhos = currentUserData?.ganhos || 0;
+  const currentUserData = allCollaborators.find(c => c.id === currentUser?.id || c.name === currentUser?.name);
+  const myEmitidos = metricsData[currentUserData?.name]?.emitidos || 0;
+  const myAssinados = metricsData[currentUserData?.name]?.assinados || 0;
+  const myProtocolados = metricsData[currentUserData?.name]?.protocolados || 0;
+  const myGanhos = metricsData[currentUserData?.name]?.ganhos || 0;
 
   const getAvatar = (item: any) =>
     rankingType === "colaborador" ? item.avatar || item.name.charAt(0) : item.avatar;
@@ -409,7 +466,8 @@ export default function Ranking() {
     ganhos: "Ganhos",
   };
 
-  if (loading && collaborators.length === 0) {
+  // Se o loading for verdadeiro e não tivermos dados, exibe loader
+  if (loading && allCollaborators.length === 0) {
     return (
       <DashboardLayout title="Ranking" subtitle="Carregando dados...">
         <div className="flex items-center justify-center h-64">
@@ -422,13 +480,13 @@ export default function Ranking() {
     );
   }
 
-  if (activeRanking.length === 0 && !loading) {
+  if (activeRanking.length === 0 && !loading && allCollaborators.length > 0) {
     return (
       <DashboardLayout title="Ranking" subtitle="Nenhum dado encontrado">
         <div className="flex items-center justify-center h-64">
           <div className="text-center text-gray-500">
-            <p>Nenhum colaborador encontrado para os filtros atuais.</p>
-            <p className="text-sm">Verifique se os dados do período foram carregados.</p>
+            <p>Nenhum colaborador elegível para o ranking com os filtros atuais.</p>
+            <p className="text-sm">Verifique se os dados do período foram carregados ou ajuste os filtros.</p>
           </div>
         </div>
       </DashboardLayout>
@@ -440,7 +498,6 @@ export default function Ranking() {
       title="Ranking de Vendedores"
       subtitle="Veja quem são os melhores vendedores do mês e acompanhe sua posição!"
     >
-      {/* Indicador de atualização */}
       <div className="flex items-center justify-end gap-2 mb-2">
         {refreshing && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 animate-pulse">
@@ -465,24 +522,47 @@ export default function Ranking() {
               <Trophy className="w-5 h-5 text-[#ffcc00]" />
               <span className="text-[#ffcc00] text-sm font-bold uppercase tracking-wide">Ranking do Mês</span>
             </div>
-            <h2 className="text-white text-2xl font-black mb-1">
-              {rankingType === "colaborador"
-                ? `Você está em ${myIndividualRank ? `#${myIndividualRank.position}` : "?"} lugar`
-                : myTeamRank
-                ? `Sua equipe está em #${myTeamRank.position} lugar`
-                : "Sua equipe não está no ranking"}
-            </h2>
-            <p className="text-white/70 text-sm">
-              {rankingType === "colaborador"
-                ? positionsToTop > 0
-                  ? `Suba ${positionsToTop} ${positionsToTop === 1 ? "posição" : "posições"} para liderar o ranking!`
-                  : "Parabéns! Você está no topo do ranking!"
-                : !myTeamRank
-                ? "Sua equipe não está cadastrada ou não possui membros no período."
-                : myTeamRank.position > 1
-                ? `Subam ${myTeamRank.position - 1} ${myTeamRank.position - 1 === 1 ? "posição" : "posições"} para liderar o ranking de equipes!`
-                : "Parabéns! Sua equipe lidera o ranking!"}
-            </p>
+            {rankingType === "colaborador" ? (
+              myIndividualRank ? (
+                <>
+                  <h2 className="text-white text-2xl font-black mb-1">
+                    Você está em #{myIndividualRank.position} lugar
+                  </h2>
+                  <p className="text-white/70 text-sm">
+                    {myIndividualRank.position > 1
+                      ? `Subam ${myIndividualRank.position - 1} ${myIndividualRank.position - 1 === 1 ? "posição" : "posições"} para liderar!`
+                      : "Parabéns! Você é o líder do ranking!"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-white text-2xl font-black mb-1">Top 3 do Mês</h2>
+                  <p className="text-white/70 text-sm">
+                    Você ainda não está no ranking. Conheça os líderes abaixo.
+                  </p>
+                </>
+              )
+            ) : (
+              myTeamRank ? (
+                <>
+                  <h2 className="text-white text-2xl font-black mb-1">
+                    Sua equipe está em #{myTeamRank.position} lugar
+                  </h2>
+                  <p className="text-white/70 text-sm">
+                    {myTeamRank.position > 1
+                      ? `Subam ${myTeamRank.position - 1} ${myTeamRank.position - 1 === 1 ? "posição" : "posições"} para liderar!`
+                      : "Parabéns! Sua equipe lidera o ranking!"}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <h2 className="text-white text-2xl font-black mb-1">Top 3 Equipes</h2>
+                  <p className="text-white/70 text-sm">
+                    Sua equipe ainda não está no ranking. Conheça as líderes abaixo.
+                  </p>
+                </>
+              )
+            )}
           </div>
           <div className="text-right">
             <div className="flex items-center gap-3 justify-end mb-1">
@@ -511,6 +591,25 @@ export default function Ranking() {
           </div>
         </div>
       </div>
+
+      {/* Top 3 em destaque (se usuário não estiver no ranking) */}
+      {rankingType === "colaborador" && !myIndividualRank && activeRanking.length >= 3 && (
+        <div className="madm-card p-4 mb-6 animate-fade-in-up bg-gradient-to-r from-[#09175b]/5 to-[#34a853]/5 border border-[#09175b]/10">
+          <p className="text-xs font-semibold text-[#09175b] mb-2">🏆 Líderes do Mês</p>
+          <div className="flex justify-around">
+            {activeRanking.slice(0, 3).map((item, idx) => {
+              const medals = ["🥇", "🥈", "🥉"];
+              return (
+                <div key={item.name} className="text-center">
+                  <div className="text-2xl">{medals[idx]}</div>
+                  <div className="text-sm font-bold text-[#09175b]">{item.name}</div>
+                  <div className="text-xs text-gray-500">{formatInt(item.ganhos)} vendas</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Filtros */}
       <div className="flex flex-wrap items-center gap-3 mb-6">
@@ -573,7 +672,7 @@ export default function Ranking() {
         )}
       </div>
 
-      {/* Top 3 */}
+      {/* Top 3 (pódio) */}
       {top3.length >= 3 && (
         <div className="madm-card p-6 mb-6 animate-fade-in-up">
           <div className="flex items-center gap-2 mb-6">
@@ -606,7 +705,7 @@ export default function Ranking() {
         </div>
       )}
 
-      {/* Tabela completa - remoção da coluna de tendência */}
+      {/* Tabela completa */}
       <div className="madm-card animate-fade-in-up">
         <div className="p-5 border-b border-gray-100">
           <h3 className="text-sm font-bold text-[#09175b]">Classificação Completa — {rankingType === "colaborador" ? "Colaboradores" : "Equipes"}</h3>
@@ -616,7 +715,6 @@ export default function Ranking() {
           </p>
         </div>
 
-        {/* Cabeçalho da tabela sem a coluna de tendência */}
         <div className="px-5 py-2 border-b border-gray-100 hidden md:grid" style={{ gridTemplateColumns: "60px 56px minmax(180px, 1fr) 90px 90px 90px 90px 90px", gap: "0.75rem" }}>
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Pos</div>
           <div></div>
@@ -628,7 +726,6 @@ export default function Ranking() {
           <div className="text-[10px] font-semibold text-gray-400 uppercase tracking-wider text-center">Score</div>
         </div>
 
-        {/* Linhas da tabela sem o ícone de tendência */}
         <div className="divide-y divide-gray-50">
           {activeRanking.map((person) => {
             const isTop3 = person.position <= 3;
