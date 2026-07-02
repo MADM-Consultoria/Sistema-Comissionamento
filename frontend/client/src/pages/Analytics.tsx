@@ -23,6 +23,7 @@ import {
   fetchGanhos,
   fetchProtocolados,
   fetchPerdidos,
+  fetchCollaborators,
 } from "@/lib/api";
 
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3007/api";
@@ -166,7 +167,8 @@ export default function Analytics() {
   const {
     currentStartDate, currentEndDate, period,
     collaborators, globalConfig, currentUser,
-    loadMetricsForPeriod, loadWeeklyPerformanceData,
+    loadCollaboratorsAndMetrics,
+    loadWeeklyPerformanceData,
     rawMetrics,
     loadRawMetrics,
   } = useAppStore();
@@ -190,6 +192,7 @@ export default function Analytics() {
   const [bonusError, setBonusError] = useState<string | null>(null);
   const [isExcluded, setIsExcluded] = useState(false);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
   const equipe = filters.equipe;
@@ -201,6 +204,7 @@ export default function Analytics() {
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
   const isFetchingRef = useRef(false);
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
 
   // ========== Verificar se o usuário é excluído ==========
   const currentUserData = useMemo(() => {
@@ -215,19 +219,14 @@ export default function Analytics() {
     setIsExcluded(teamExcluded || groupExcluded);
   }, [currentUserData]);
 
-  // ========== Função de recarga dos dados (compartilhada) ==========
+  // ========== Função de recarga dos dados ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
       const equipeApi = equipe === "todas" ? undefined : equipe;
       const colaboradorApi = colaborador === "todos" ? undefined : colaborador;
       const produtoApi = produto === "Todos" ? undefined : produto;
-      await loadMetricsForPeriod({
-        equipeNome: equipeApi,
-        colaboradorNome: colaboradorApi,
-        colaboradorId: colaboradorId,
-        produto: produtoApi,
-      });
+      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorId, produtoApi);
       await loadRawMetrics({
         equipeNome: equipeApi,
         colaboradorNome: colaboradorApi,
@@ -236,11 +235,12 @@ export default function Analytics() {
       });
       await loadWeeklyPerformanceData();
     } catch (err) {
-      console.error("Erro ao recarregar dados do Analytics:", err);
+      console.error("❌ Analytics: erro ao recarregar dados:", err);
     } finally {
       if (showRefreshing) setRefreshing(false);
+      setLoading(false);
     }
-  }, [equipe, colaborador, colaboradorId, produto, loadMetricsForPeriod, loadRawMetrics, loadWeeklyPerformanceData]);
+  }, [equipe, colaborador, colaboradorId, produto, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
   // ========== Carregamento inicial e quando filtros/datas mudarem ==========
   useEffect(() => {
@@ -258,21 +258,36 @@ export default function Analytics() {
 
     lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
     lastFiltersRef.current = { ...filters };
+    setIsFirstLoad(true);
+
+    // Timeout de segurança
+    if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    timeoutIdRef.current = setTimeout(() => {
+      if (loading) {
+        console.warn("⏱️ Analytics: timeout de segurança forçando fim do loading");
+        setLoading(false);
+        setIsFirstLoad(false);
+      }
+    }, 15000);
 
     const load = async () => {
+      setLoading(true);
       try {
         await reloadData(false);
         initialLoadDone.current = true;
         setIsFirstLoad(false);
       } catch (err) {
-        console.error("Erro ao carregar dados:", err);
+        console.error("❌ Analytics: erro ao carregar dados:", err);
+      } finally {
+        setLoading(false);
+        if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
       }
     };
 
     load();
-  }, [currentStartDate, currentEndDate, filters, reloadData]);
+  }, [currentStartDate, currentEndDate, filters, reloadData, loading]);
 
-  // ========== ATUALIZAÇÃO PERIÓDICA (polling a cada 60 segundos) ==========
+  // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -284,13 +299,10 @@ export default function Analytics() {
     };
 
     const intervalId = setInterval(refresh, 300000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
-  // ========== BUSCA DO BÔNUS (apenas se não excluído) ==========
+  // ========== BUSCA DO BÔNUS ==========
   useEffect(() => {
     if (!currentUser?.id) {
       setBonusLoading(false);
@@ -310,22 +322,19 @@ export default function Analytics() {
       setBonusError(null);
       try {
         const mes = currentStartDate?.substring(0, 7) || new Date().toISOString().slice(0, 7);
-        
         let url = `${API_BASE}/metricas-assessores?mes=${mes}&colaborador_id=${currentUser.id}`;
         let res = await fetch(url, { credentials: 'include' });
         let data = await res.json();
-        
+
         let bonus = 0;
         let found = false;
-        
+
         if (data.success && data.data && data.data.length > 0) {
           const raw = data.data[0].comissao_bonus;
           bonus = typeof raw === 'number' ? raw : parseFloat(raw);
-          if (!isNaN(bonus) && bonus > 0) {
-            found = true;
-          }
+          if (!isNaN(bonus) && bonus > 0) found = true;
         }
-        
+
         if (!found && currentUser.email) {
           url = `${API_BASE}/metricas-assessores?mes=${mes}&email=${encodeURIComponent(currentUser.email)}`;
           res = await fetch(url, { credentials: 'include' });
@@ -333,12 +342,10 @@ export default function Analytics() {
           if (data.success && data.data && data.data.length > 0) {
             const raw = data.data[0].comissao_bonus;
             bonus = typeof raw === 'number' ? raw : parseFloat(raw);
-            if (!isNaN(bonus)) {
-              found = true;
-            }
+            if (!isNaN(bonus)) found = true;
           }
         }
-        
+
         if (found && bonus > 0) {
           setUserBonus(bonus);
         } else {
@@ -357,27 +364,22 @@ export default function Analytics() {
     fetchBonus();
   }, [currentUser, currentStartDate, isExcluded]);
 
-  // ========== GRÁFICO DE EVOLUÇÃO DIÁRIA (sem flicker) ==========
+  // ========== GRÁFICO DE EVOLUÇÃO DIÁRIA ==========
   const chartDateRange = useMemo(() => {
     return getChartDateRange(period, currentStartDate, currentEndDate);
   }, [period, currentStartDate, currentEndDate]);
 
-  // Estado de versão para forçar recarga quando necessário (por exemplo, após polling)
+  // Estado de versão para forçar recarga quando necessário (ex: após polling)
   const [chartVersion, setChartVersion] = useState(0);
 
-  // Modificamos reloadData para incrementar chartVersion
+  // Incrementa chartVersion após recarga para forçar atualização do gráfico
   const reloadDataWithChart = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
       const equipeApi = equipe === "todas" ? undefined : equipe;
       const colaboradorApi = colaborador === "todos" ? undefined : colaborador;
       const produtoApi = produto === "Todos" ? undefined : produto;
-      await loadMetricsForPeriod({
-        equipeNome: equipeApi,
-        colaboradorNome: colaboradorApi,
-        colaboradorId: colaboradorId,
-        produto: produtoApi,
-      });
+      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorId, produtoApi);
       await loadRawMetrics({
         equipeNome: equipeApi,
         colaboradorNome: colaboradorApi,
@@ -387,61 +389,14 @@ export default function Analytics() {
       await loadWeeklyPerformanceData();
       setChartVersion(prev => prev + 1);
     } catch (err) {
-      console.error("Erro ao recarregar dados do Analytics:", err);
+      console.error("❌ Analytics: erro ao recarregar dados com gráfico:", err);
     } finally {
       if (showRefreshing) setRefreshing(false);
+      setLoading(false);
     }
-  }, [equipe, colaborador, colaboradorId, produto, loadMetricsForPeriod, loadRawMetrics, loadWeeklyPerformanceData]);
+  }, [equipe, colaborador, colaboradorId, produto, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
-  // Atualiza os useEffects para usar reloadDataWithChart
-  useEffect(() => {
-    if (!currentStartDate || !currentEndDate) return;
-
-    const datesChanged =
-      currentStartDate !== lastDatesRef.current.start ||
-      currentEndDate !== lastDatesRef.current.end;
-    const filtersChanged =
-      filters.equipe !== lastFiltersRef.current.equipe ||
-      filters.colaborador !== lastFiltersRef.current.colaborador ||
-      filters.produto !== lastFiltersRef.current.produto;
-
-    if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
-
-    lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
-    lastFiltersRef.current = { ...filters };
-
-    const load = async () => {
-      try {
-        await reloadDataWithChart(false);
-        initialLoadDone.current = true;
-        setIsFirstLoad(false);
-      } catch (err) {
-        console.error("Erro ao carregar dados:", err);
-      }
-    };
-
-    load();
-  }, [currentStartDate, currentEndDate, filters, reloadDataWithChart]);
-
-  // Polling com reloadDataWithChart
-  useEffect(() => {
-    if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
-
-    const refresh = async () => {
-      if (refreshing) return;
-      if (document.visibilityState === 'visible') {
-        await reloadDataWithChart(true);
-      }
-    };
-
-    const intervalId = setInterval(refresh, 300000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
-  }, [currentStartDate, currentEndDate, reloadDataWithChart, refreshing]);
-
-  // Efeito para carregar os dados do gráfico, com controle de flicker
+  // Efeito principal do gráfico
   useEffect(() => {
     if (!chartDateRange.start || !chartDateRange.end) return;
 
@@ -449,15 +404,8 @@ export default function Analytics() {
     const signal = abortController.signal;
 
     const fetchChartData = async () => {
-      // Evita múltiplas execuções simultâneas
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
-
-      // Apenas no primeiro carregamento mostramos o loading no gráfico
-      // Nas recargas, mantemos os dados antigos e o indicador fica no canto
-      if (isFirstLoad) {
-        // Não zeramos os dados, apenas indicamos carregamento
-      }
 
       try {
         const equipeApi = equipe === "todas" ? undefined : equipe;
@@ -485,7 +433,7 @@ export default function Analytics() {
         if (signal.aborted) return;
 
         const dataMap = new Map<string, { leads: number; assinados: number; ganhos: number; protocolados: number; perdidos: number }>();
-        
+
         const processData = (data: any[], field: 'leads' | 'assinados' | 'ganhos' | 'protocolados' | 'perdidos') => {
           data.forEach(item => {
             let rawDate = item.data || item.periodo;
@@ -550,7 +498,7 @@ export default function Analytics() {
         });
 
         setDailyChartData(chartArray);
-        
+
         const totalLeadsSum = Array.from(dataMap.values()).reduce((s, v) => s + v.leads, 0);
         const totalAssinadosSum = Array.from(dataMap.values()).reduce((s, v) => s + v.assinados, 0);
         setTotalLeads(totalLeadsSum);
@@ -558,7 +506,7 @@ export default function Analytics() {
         setApiError(null);
       } catch (err: any) {
         if (err.name !== 'AbortError') {
-          console.error("❌ Erro no gráfico:", err);
+          console.error("❌ Analytics: erro no gráfico:", err);
           setApiError(err.message || "Erro ao carregar dados do gráfico");
         }
       } finally {
@@ -571,7 +519,7 @@ export default function Analytics() {
       abortController.abort();
       isFetchingRef.current = false;
     };
-  }, [chartDateRange, equipe, colaborador, colaboradorId, produto, period, chartVersion, isFirstLoad]);
+  }, [chartDateRange, equipe, colaborador, colaboradorId, produto, period, chartVersion]);
 
   // ========== DADOS PARA KPIS ==========
   const totals = rawMetrics;
@@ -629,7 +577,7 @@ export default function Analytics() {
   const taxaConversaoGeral = totalLeads > 0 ? (totalAssinados / totalLeads) * 100 : 0;
   const mediaDiariaVendas = dailyChartData.length > 0 ? totalAssinados / dailyChartData.length : 0;
 
-  // Gráficos de funil e conversão (rawMetrics)
+  // Gráficos de funil e conversão
   const funnelChartData = [
     { name: "Emitidos", value: totals.emitidos, color: "#09175b" },
     { name: "Assinados", value: totals.assinados, color: "#34a853" },
@@ -707,9 +655,17 @@ export default function Analytics() {
   };
 
   const chartPeriodDesc = period === "Hoje" ? "(semana atual)" : period === "Semana" ? "(duas últimas semanas, apenas dias úteis)" : "";
-
-  // Verifica se o gráfico está carregando pela primeira vez
   const isGraphLoading = isFirstLoad && dailyChartData.length === 0 && !apiError;
+
+  if (loading && collaborators.length === 0) {
+    return (
+      <DashboardLayout title="Analytics" subtitle="Métricas avançadas...">
+        <div className="flex justify-center items-center h-64">
+          <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Analytics" subtitle="Métricas avançadas, comissões e indicadores de performance">
@@ -782,7 +738,7 @@ export default function Analytics() {
         </p>
         {isGraphLoading && (
           <div className="flex justify-center py-8">
-            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-[#09175b]" />
+            <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
           </div>
         )}
         {apiError && (

@@ -1,6 +1,5 @@
 // src/pages/Comissoes.tsx
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
-import { useLocation } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import FilterBar from "@/components/FilterBar";
 import { useAppStore, formatCurrency } from "@/lib/dataStore";
@@ -12,6 +11,7 @@ import {
   BarChart, Bar, XAxis, YAxis,
   CartesianGrid, Tooltip, ResponsiveContainer, Cell,
 } from "recharts";
+import { cn } from "@/lib/utils";
 
 type PeriodoMeta = 'diario' | 'semanal' | 'mensal';
 
@@ -80,6 +80,23 @@ function obterBonusCiclo(colaborador: any, configEquipe: any[], configGlobal: an
   return equipe?.bonus || configGlobal.valorBonus;
 }
 
+// ========== COMPONENTE DE TOOLTIP EXTERNO (evita recriação) ==========
+const CustomTooltip = ({ active, payload, label }: any) => {
+  if (active && payload?.length) {
+    return (
+      <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg text-xs">
+        <p className="font-semibold text-gray-700 mb-1">{label}</p>
+        {payload.map((entry: any, i: number) => (
+          <p key={i} style={{ color: entry.color }} className="font-medium">
+            {entry.name}: {typeof entry.value === 'number' ? formatCurrency(entry.value) : entry.value}
+          </p>
+        ))}
+      </div>
+    );
+  }
+  return null;
+};
+
 export default function Comissoes() {
   const {
     currentStartDate, currentEndDate,
@@ -103,7 +120,10 @@ export default function Comissoes() {
   const initialLoadDone = useRef(false);
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
 
+  // ========== FUNÇÃO DE RECARGA ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -114,16 +134,26 @@ export default function Comissoes() {
       await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
       await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
       await loadWeeklyPerformanceData();
+      setError(null);
     } catch (err: any) {
-      console.error("Erro ao recarregar dados:", err);
-      setError(err.message || "Falha ao recarregar dados.");
+      console.error("❌ Comissoes: erro ao recarregar dados:", err);
+      if (isMountedRef.current) {
+        setError(err.message || "Falha ao recarregar dados.");
+      }
     } finally {
-      if (showRefreshing) setRefreshing(false);
+      if (showRefreshing && isMountedRef.current) {
+        setRefreshing(false);
+      }
     }
   }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
+  // ========== CARREGAMENTO INICIAL E QUANDO FILTROS/DATAS MUDAM ==========
   useEffect(() => {
-    if (!currentStartDate || !currentEndDate) return;
+    isMountedRef.current = true;
+    if (!currentStartDate || !currentEndDate) {
+      if (isMountedRef.current) setLoading(false);
+      return;
+    }
 
     const datesChanged =
       currentStartDate !== lastDatesRef.current.start ||
@@ -133,44 +163,70 @@ export default function Comissoes() {
       filters.colaborador !== lastFiltersRef.current.colaborador ||
       filters.produto !== lastFiltersRef.current.produto;
 
-    if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
+    if (initialLoadDone.current && !datesChanged && !filtersChanged) {
+      if (isMountedRef.current) setLoading(false);
+      return;
+    }
 
     lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
     lastFiltersRef.current = { ...filters };
 
     const load = async () => {
-      setLoading(true);
-      setError(null);
+      if (isMountedRef.current) {
+        setLoading(true);
+        setError(null);
+        setLoadingMessage("Carregando dados...");
+      }
+
+      // Timeout de segurança (10 segundos)
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+      timeoutIdRef.current = setTimeout(() => {
+        if (isMountedRef.current && loading) {
+          console.warn("⏱️ Comissoes: timeout de segurança forçando fim do loading");
+          setLoading(false);
+          setError("O carregamento demorou mais que o esperado. Tente recarregar a página.");
+        }
+      }, 10000);
+
       try {
         await reloadData(false);
-        initialLoadDone.current = true;
+        if (isMountedRef.current) {
+          initialLoadDone.current = true;
+          setLoading(false);
+        }
       } catch (err: any) {
-        setError(err.message || "Falha ao carregar dados.");
+        if (isMountedRef.current) {
+          setError(err.message || "Falha ao carregar dados.");
+          setLoading(false);
+        }
       } finally {
-        setLoading(false);
+        if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
       }
     };
 
     load();
-  }, [currentStartDate, currentEndDate, filters, reloadData]);
 
+    return () => {
+      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    };
+  }, [currentStartDate, currentEndDate, filters, reloadData, loading]);
+
+  // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
     const refresh = async () => {
       if (refreshing) return;
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isMountedRef.current) {
         await reloadData(true);
       }
     };
 
     const intervalId = setInterval(refresh, 300000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
+  // ========== DADOS FILTRADOS E CÁLCULOS ==========
   const filteredColabs = useMemo(() => {
     let filtered = storeColabs.filter(c => {
       if (EXCLUDED_TEAMS.some(team => normalizeText(c.equipeNome) === normalizeText(team))) return false;
@@ -248,23 +304,7 @@ export default function Comissoes() {
 
   const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
 
-  const CustomTooltip = ({ active, payload, label }: any) => {
-    if (active && payload?.length) {
-      return (
-        <div className="bg-white border border-gray-200 rounded-lg p-3 shadow-lg text-xs">
-          <p className="font-semibold text-gray-700 mb-1">{label}</p>
-          {payload.map((entry: any, i: number) => (
-            <p key={i} style={{ color: entry.color }} className="font-medium">
-              {entry.name}: {typeof entry.value === 'number' ? formatCurrency(entry.value) : entry.value}
-            </p>
-          ))}
-        </div>
-      );
-    }
-    return null;
-  };
-
-  // Cartões de resumo – todos os números inteiros formatados com separador
+  // Cartões de resumo
   const summaryCards = [
     {
       label: "Comissão Total Estimada", value: totals.comissao, icon: DollarSign,
@@ -307,8 +347,8 @@ export default function Comissoes() {
       <FilterBar onFilterChange={handleFilterChange} showColaboradorFilter={true} className="mb-6" />
 
       {loading && (
-        <div className="flex justify-center items-center py-4">
-          <Loader2 className="w-5 h-5 animate-spin text-[#09175b]" />
+        <div className="flex justify-center items-center py-8">
+          <Loader2 className="w-6 h-6 animate-spin text-[#09175b]" />
           <span className="ml-2 text-sm text-gray-500">{loadingMessage}</span>
         </div>
       )}
@@ -316,7 +356,12 @@ export default function Comissoes() {
       {error && (
         <div className="bg-red-50 border border-red-200 rounded-lg p-4 text-center text-red-700 text-sm mb-4">
           <p>{error}</p>
-          <button onClick={() => window.location.reload()} className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg text-xs">Recarregar</button>
+          <button
+            onClick={() => window.location.reload()}
+            className="mt-2 px-4 py-2 bg-red-600 text-white rounded-lg text-xs hover:bg-red-700 transition-colors"
+          >
+            Recarregar
+          </button>
         </div>
       )}
 
@@ -351,7 +396,6 @@ export default function Comissoes() {
               } else if (card.isInteger) {
                 displayValue = formatInt(card.value);
               } else {
-                // fallback
                 displayValue = String(card.value);
               }
               return (

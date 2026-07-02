@@ -15,12 +15,6 @@ interface FilterBarProps {
   initialProduto?: string;
 }
 
-const GLOBAL_META = {
-  diario: { assinados: 100, ganhos: 100 },
-  semanal: { assinados: 500, ganhos: 500 },
-  mensal: { assinados: 2000, ganhos: 2000 },
-};
-
 const normalize = (str: string): string => (str || '').trim().toLowerCase();
 
 const EXCLUDED_TEAMS = [
@@ -43,11 +37,6 @@ const TEAM_TO_PRODUCT: Record<string, string> = {
   "Equipe Quinquênio": "Quinquenio",
 };
 
-const PRODUCT_TO_TEAM: Record<string, string> = {
-  Concomitante: "Equipe Concomitante",
-  Quinquenio: "Equipe Quinquenio",
-};
-
 const PRODUCT_OPTIONS = ["Todos", "Auxilio Acidente", "Quinquenio", "Concomitante"];
 
 export default function FilterBar({
@@ -68,16 +57,28 @@ export default function FilterBar({
   const [loadingEquipes, setLoadingEquipes] = useState(false);
   const [loadingCollaborators, setLoadingCollaborators] = useState(false);
   const [colabError, setColabError] = useState<string | null>(null);
+  const [isReady, setIsReady] = useState(false);
+  const [hasAppliedRestrictions, setHasAppliedRestrictions] = useState(false);
 
   const userLevel = getAccessLevel();
   const isAssessor = userLevel === LEVELS.ASSESSOR;
   const isSupervisor = userLevel === LEVELS.SUPERVISAO;
-  const isAdminOrCoord = userLevel >= LEVELS.COORDENADOR;
+
+  // ========== TIMEOUT DE SEGURANÇA ==========
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!isReady) {
+        console.warn('⏱️ FilterBar: timeout de segurança forçando ready');
+        setIsReady(true);
+      }
+    }, 8000);
+    return () => clearTimeout(timeout);
+  }, [isReady]);
 
   // ========== CARREGA EQUIPES ==========
   useEffect(() => {
     let mounted = true;
-    const loadEquipes = async () => {
+    const load = async () => {
       if (equipeConfigs.length > 0) return;
       setLoadingEquipes(true);
       try {
@@ -95,79 +96,77 @@ export default function FilterBar({
             }))
           );
         }
-      } catch (error: any) {
-        console.error("Erro ao carregar equipes:", error);
-        if (error.message?.includes('401')) {
-          window.location.href = '/login';
-        }
-      } finally {
+      } catch (_) { /* ignora */ } finally {
         if (mounted) setLoadingEquipes(false);
       }
     };
-    loadEquipes();
+    load();
     return () => { mounted = false; };
   }, [equipeConfigs.length, setEquipeConfigs]);
 
   // ========== CARREGA COLABORADORES ==========
   useEffect(() => {
     let mounted = true;
-    const loadColabs = async () => {
-      if (collaborators.length > 0) return;
+    const load = async () => {
+      if (collaborators.length > 0) {
+        if (mounted) {
+          setIsReady(true);
+          setLoadingCollaborators(false);
+        }
+        return;
+      }
       setLoadingCollaborators(true);
       setColabError(null);
       try {
         const collabs = await fetchCollaborators();
-        if (mounted) setCollaborators(collabs);
-      } catch (error: any) {
-        console.error("Erro ao carregar colaboradores:", error);
-        if (error.message?.includes('401')) {
-          window.location.href = '/login';
-          return;
+        if (mounted) {
+          setCollaborators(collabs);
+          setIsReady(true);
         }
-        if (mounted) setColabError(error.message || "Falha ao carregar colaboradores");
+      } catch (err: any) {
+        console.error('Erro ao carregar colaboradores:', err);
+        if (mounted) {
+          setColabError(err.message || "Falha ao carregar colaboradores");
+          setIsReady(true);
+        }
       } finally {
         if (mounted) setLoadingCollaborators(false);
       }
     };
-    loadColabs();
+    load();
     return () => { mounted = false; };
   }, [collaborators.length, setCollaborators]);
 
-  // ========== RESTRIÇÕES DE ACESSO ==========
+  // ========== APLICA RESTRIÇÕES DE ACESSO (o mais cedo possível) ==========
   useEffect(() => {
     if (!currentUser) return;
+    if (hasAppliedRestrictions) return;
+
+    console.log('🔒 FilterBar: aplicando restrições de acesso para', currentUser.grupo);
+
     if (isAssessor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
       if (currentUser.name) setSelectedColaborador(currentUser.name);
     } else if (isSupervisor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
       setSelectedColaborador("todos");
-    } else if (isAdminOrCoord) {
+    } else {
+      // Admin/Coordenador: mantém valores iniciais
       setSelectedEquipe(initialEquipe);
       setSelectedColaborador(initialColaborador);
     }
-  }, [currentUser, isAssessor, isSupervisor, isAdminOrCoord, initialEquipe, initialColaborador]);
+    setHasAppliedRestrictions(true);
+  }, [currentUser, isAssessor, isSupervisor, initialEquipe, initialColaborador, hasAppliedRestrictions]);
 
-  // ========== Sincronia equipe <-> produto (apenas sugestão, nunca bloqueia) ==========
+  // ========== Sincronia equipe ⇄ produto ==========
   useEffect(() => {
-    // Se a equipe mapeia para um produto específico, podemos sugerir o produto,
-    // mas NÃO forçamos nem bloqueamos a edição.
     if (selectedEquipe && TEAM_TO_PRODUCT[selectedEquipe]) {
       const mapped = TEAM_TO_PRODUCT[selectedEquipe];
-      // Apenas se o produto atual for "Todos", sugerimos o mapeamento.
-      // Se o usuário já escolheu outro, mantemos.
-      if (selectedProduto === "Todos") {
-        setSelectedProduto(mapped);
-      }
-    } else if (selectedProduto && PRODUCT_TO_TEAM[selectedProduto]) {
-      const mapped = PRODUCT_TO_TEAM[selectedProduto];
-      if (selectedEquipe === "todas") {
-        setSelectedEquipe(mapped);
-      }
+      if (selectedProduto !== mapped) setSelectedProduto(mapped);
     }
-  }, [selectedEquipe, selectedProduto]);
+  }, [selectedEquipe]);
 
-  // ========== LISTA DE EQUIPES (filtrada) ==========
+  // ========== LISTA DE EQUIPES ==========
   const equipesDisponiveis = useMemo(() => {
     let nomes = equipeConfigs.map((eq) => eq.nome).filter((nome) => !isExcludedTeam(nome));
     if ((isAssessor || isSupervisor) && currentUser?.equipe) {
@@ -179,7 +178,7 @@ export default function FilterBar({
 
   // ========== COLABORADORES FILTRADOS ==========
   const filteredColaboradores = useMemo(() => {
-    if (!collaborators.length) return [];
+    if (!isReady || !collaborators.length) return [];
     let filtered = [...collaborators];
     filtered = filtered.filter((c) => !isExcludedTeam(c.equipeNome));
     filtered = filtered.filter((c) => normalize(c.grupo) !== 'administrativo');
@@ -204,10 +203,11 @@ export default function FilterBar({
       );
     }
     return filtered;
-  }, [collaborators, selectedEquipe, isAssessor, isSupervisor, currentUser, searchTerm]);
+  }, [collaborators, selectedEquipe, isAssessor, isSupervisor, currentUser, searchTerm, isReady]);
 
-  // ========== 🔥 NOVO: AJUSTA EQUIPE AUTOMATICAMENTE QUANDO COLABORADOR É SELECIONADO ==========
+  // ========== AJUSTA EQUIPE QUANDO COLABORADOR SELECIONADO ==========
   useEffect(() => {
+    if (!isReady) return;
     if (selectedColaborador === "todos" || !collaborators.length) return;
     if (isAssessor || isSupervisor) return;
 
@@ -218,15 +218,17 @@ export default function FilterBar({
         setSelectedEquipe(equipeDoColab);
       }
     }
-  }, [selectedColaborador, collaborators, isAssessor, isSupervisor, selectedEquipe, equipesDisponiveis]);
+  }, [selectedColaborador, collaborators, isAssessor, isSupervisor, selectedEquipe, equipesDisponiveis, isReady]);
 
-  // ========== NOTIFICAR PARENT ==========
+  // ========== NOTIFICAR O PARENT (APENAS QUANDO RESTRIÇÕES APLICADAS E READY) ==========
   const onFilterChangeRef = useRef(onFilterChange);
   useEffect(() => {
     onFilterChangeRef.current = onFilterChange;
   }, [onFilterChange]);
 
   useEffect(() => {
+    if (!isReady || !hasAppliedRestrictions || !currentUser) return;
+
     let finalEquipe = selectedEquipe;
     let finalColaborador = selectedColaborador;
     if (isAssessor && currentUser) {
@@ -248,10 +250,11 @@ export default function FilterBar({
       colaboradorId,
       produto: selectedProduto,
     });
-  }, [selectedEquipe, selectedColaborador, selectedProduto, isAssessor, isSupervisor, currentUser, collaborators]);
+  }, [selectedEquipe, selectedColaborador, selectedProduto, isAssessor, isSupervisor, currentUser, collaborators, isReady, hasAppliedRestrictions]);
 
   // ========== LIMPAR FILTROS ==========
   const clearFilters = () => {
+    if (!isReady) return;
     if (isAssessor && currentUser) {
       setSelectedProduto("Todos");
     } else if (isSupervisor && currentUser) {
@@ -267,6 +270,7 @@ export default function FilterBar({
   };
 
   const hasActiveFilters = (() => {
+    if (!isReady) return false;
     if (isAssessor) return selectedProduto !== "Todos";
     if (isSupervisor)
       return selectedColaborador !== "todos" || searchTerm !== "" || selectedProduto !== "Todos";
@@ -278,15 +282,17 @@ export default function FilterBar({
     );
   })();
 
-  const isEquipeDisabled = isAssessor || isSupervisor || loadingEquipes;
-  const isColaboradorDisabled = isAssessor || loadingCollaborators;
+  const isEquipeDisabled = isAssessor || isSupervisor || loadingEquipes || !isReady;
+  const isColaboradorDisabled = isAssessor || loadingCollaborators || !isReady;
+  const isProdutoDisabled = !!selectedEquipe && TEAM_TO_PRODUCT[selectedEquipe] !== undefined;
 
-  if (loadingEquipes && equipesDisponiveis.length === 0) {
+  // ========== RENDER ==========
+  if (!isReady || loadingEquipes || loadingCollaborators) {
     return (
       <div className={cn("bg-white rounded-xl border border-gray-100 shadow-sm p-4", className)}>
         <div className="flex items-center justify-center gap-2 text-gray-500">
           <Loader2 className="w-4 h-4 animate-spin" />
-          <span className="text-xs">Carregando equipes...</span>
+          <span className="text-xs">Carregando filtros...</span>
         </div>
       </div>
     );
@@ -301,6 +307,8 @@ export default function FilterBar({
           <button
             onClick={() => window.location.reload()}
             className="ml-auto px-2 py-1 bg-red-100 rounded text-red-700 hover:bg-red-200"
+            aria-label="Recarregar a página"
+            title="Recarregar a página"
           >
             Recarregar
           </button>
@@ -312,7 +320,6 @@ export default function FilterBar({
   return (
     <div className={cn("bg-white rounded-xl border border-gray-100 shadow-sm p-4", className)}>
       <div className="flex flex-col gap-4">
-        {/* Busca por colaborador */}
         {collaborators.length > 5 && !isAssessor && showColaboradorFilter && (
           <div className="relative">
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
@@ -323,18 +330,20 @@ export default function FilterBar({
               onChange={(e) => setSearchTerm(e.target.value)}
               disabled={isAssessor}
               className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
-              aria-label="Buscar colaborador"
+              aria-label="Buscar colaborador por nome ou e-mail"
+              title="Digite o nome ou e-mail do colaborador"
             />
           </div>
         )}
 
         <div className="flex flex-col sm:flex-row gap-3">
-          {/* Equipe */}
+          {/* Select Equipe */}
           <div className="flex-1">
-            <label className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
+            <label htmlFor="filterEquipe" className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
               <Briefcase className="w-3 h-3" /> Equipe
             </label>
             <select
+              id="filterEquipe"
               value={selectedEquipe}
               onChange={(e) => setSelectedEquipe(e.target.value)}
               disabled={isEquipeDisabled}
@@ -343,6 +352,7 @@ export default function FilterBar({
                 isEquipeDisabled && "bg-gray-100 cursor-not-allowed"
               )}
               aria-label="Filtrar por equipe"
+              title="Selecione uma equipe para filtrar os dados"
             >
               {equipesDisponiveis.map((equipe) => (
                 <option key={equipe} value={equipe}>
@@ -352,13 +362,14 @@ export default function FilterBar({
             </select>
           </div>
 
-          {/* Colaborador */}
+          {/* Select Colaborador */}
           {showColaboradorFilter && (
             <div className="flex-1">
-              <label className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
+              <label htmlFor="filterColaborador" className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
                 <Users className="w-3 h-3" /> Colaborador
               </label>
               <select
+                id="filterColaborador"
                 key={filteredColaboradores.length}
                 value={selectedColaborador}
                 onChange={(e) => setSelectedColaborador(e.target.value)}
@@ -368,40 +379,40 @@ export default function FilterBar({
                   isColaboradorDisabled && "bg-gray-100 cursor-not-allowed"
                 )}
                 aria-label="Filtrar por colaborador"
+                title="Selecione um colaborador para filtrar os dados"
               >
                 <option value="todos">Todos os colaboradores</option>
-                {loadingCollaborators && <option disabled>Carregando colaboradores...</option>}
-                {!loadingCollaborators && filteredColaboradores.length === 0 && (
+                {filteredColaboradores.length === 0 && (
                   <option disabled>Nenhum colaborador disponível</option>
                 )}
-                {!loadingCollaborators &&
-                  filteredColaboradores.map((colab) => (
-                    <option key={colab.id} value={colab.name}>
-                      {colab.name}
-                      {!isAssessor && !isSupervisor && selectedEquipe === "todas"
-                        ? ` (${colab.equipeNome || "Sem equipe"})`
-                        : ""}
-                    </option>
-                  ))}
+                {filteredColaboradores.map((colab) => (
+                  <option key={colab.id} value={colab.name}>
+                    {colab.name}
+                    {!isAssessor && !isSupervisor && selectedEquipe === "todas"
+                      ? ` (${colab.equipeNome || "Sem equipe"})`
+                      : ""}
+                  </option>
+                ))}
               </select>
-              {loadingCollaborators && (
-                <div className="text-[10px] text-gray-400 mt-1 flex items-center gap-1">
-                  <Loader2 className="w-3 h-3 animate-spin" /> Carregando lista...
-                </div>
-              )}
             </div>
           )}
 
-          {/* Produto – SEMPRE HABILITADO */}
+          {/* Select Produto */}
           <div className="flex-1">
-            <label className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
+            <label htmlFor="filterProduto" className="block text-[10px] font-medium text-gray-500 mb-1 flex items-center gap-1">
               <Package className="w-3 h-3" /> Produto
             </label>
             <select
+              id="filterProduto"
               value={selectedProduto}
               onChange={(e) => setSelectedProduto(e.target.value)}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09175b]/20"
+              disabled={isProdutoDisabled}
+              className={cn(
+                "w-full px-3 py-2 text-sm rounded-lg border border-gray-200 bg-white focus:outline-none focus:ring-2 focus:ring-[#09175b]/20",
+                isProdutoDisabled && "bg-gray-100 cursor-not-allowed"
+              )}
               aria-label="Filtrar por produto"
+              title="Selecione um produto para filtrar os dados"
             >
               {PRODUCT_OPTIONS.map((prod) => (
                 <option key={prod} value={prod}>{prod}</option>
@@ -409,13 +420,14 @@ export default function FilterBar({
             </select>
           </div>
 
-          {/* Limpar filtros */}
+          {/* Botão Limpar */}
           {hasActiveFilters && (
             <div className="flex items-end">
               <button
                 onClick={clearFilters}
                 className="flex items-center gap-1 px-3 py-2 text-xs font-medium text-gray-500 hover:text-red-500 transition-colors rounded-lg hover:bg-red-50"
                 aria-label="Limpar todos os filtros"
+                title="Remover todos os filtros aplicados"
               >
                 <X className="w-3.5 h-3.5" /> Limpar
               </button>
@@ -423,7 +435,7 @@ export default function FilterBar({
           )}
         </div>
 
-        {/* Filtros ativos */}
+        {/* Filtros ativos (apenas visual) */}
         {hasActiveFilters && (
           <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
             <Filter className="w-3 h-3 text-gray-400" />

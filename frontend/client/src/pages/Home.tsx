@@ -15,9 +15,19 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Link } from "wouter";
-import { fetchEmitidos, fetchAssinados, fetchLeadsRecebidos, fetchGanhos } from "@/lib/api";
+import {
+  fetchEmitidos,
+  fetchAssinados,
+  fetchLeadsRecebidos,
+  fetchGanhos,
+  fetchPerdidos,
+  fetchCollaborators,
+  fetchProtocolados,
+} from "@/lib/api";
 
-// ========== CONSTANTES DE EXCLUSÃO ==========
+// ============================================================
+// CONSTANTES DE EXCLUSÃO (ALINHADAS COM A PÁGINA RANKING)
+// ============================================================
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
   'Equipe Erica', 'Equipe Lucas', 'Equipe Irene', 'Equipe Maria Eduarda', 'SalesOps',
@@ -25,9 +35,23 @@ const EXCLUDED_TEAMS = [
   'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo',
   'Equipe Thales','Financeiro'
 ];
+
 const EXCLUDED_GROUPS_FOR_DISPLAY = [
-  "Supervisor", "Coordenador", "Administrativo"
+  "Supervisor", "Salesops", "Sales ops", "Coordenador", "CEO",
+  "Diretoria", "Desativado", "Juridico", "Ultravita", "Diligencia",
+  "Marketing", "Gerência", "Contrato", "Dr. Felipe Marx", "Administrativo",
+  "administrativo"
 ];
+
+// ============================================================
+// CONFIGURAÇÃO DE PESOS (MESMA DA PÁGINA RANKING)
+// ============================================================
+const WEIGHTS: Record<'emitidos' | 'assinados' | 'protocolados' | 'ganhos', number> = {
+  ganhos: 4,
+  assinados: 3,
+  protocolados: 1,
+  emitidos: 2,
+};
 
 // ========== METAS GLOBAIS (visão geral) ==========
 const GLOBAL_META = {
@@ -43,13 +67,27 @@ const isExcludedTeam = (teamName: string) => EXCLUDED_TEAMS.includes(teamName);
 const isExcludedGroupForDisplay = (group: string) =>
   EXCLUDED_GROUPS_FOR_DISPLAY.some(g => normalize(g) === normalize(group));
 
-const isDesativado = (c: Collaborator) => {
+const isDesativado = (c: any) => {
   const grupo = normalize(c.grupo);
   const equipe = normalize(c.equipeNome);
   return grupo === 'desativado' || equipe.includes('desativado');
 };
 
-// ========== UTILITÁRIOS DE DATAS COM UTC (ROBUSTOS) ==========
+// ============================================================
+// FUNÇÃO DE PONTUAÇÃO PONDERADA (MESMA DA PÁGINA RANKING)
+// ============================================================
+function calculateWeightedScore(
+  item: { ganhos: number; assinados: number; protocolados: number; emitidos: number }
+): number {
+  let score = 0;
+  for (const [metric, weight] of Object.entries(WEIGHTS)) {
+    const value = item[metric as keyof typeof item] || 0;
+    score += value * weight;
+  }
+  return score;
+}
+
+// ========== UTILITÁRIOS DE DATAS COM UTC ==========
 function parseUTCDate(dateStr: string): Date {
   if (!dateStr) return new Date(NaN);
   if (dateStr.includes('T') || dateStr.includes('Z')) {
@@ -124,10 +162,10 @@ function countWeekdaysUTC(startDate: string, endDate: string): number {
   return count;
 }
 
-// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+// ========== FORMATAÇÃO ==========
 const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
 
-// ========== OUTROS HOOKS E FUNÇÕES ==========
+// ========== HOOKS E COMPONENTES AUXILIARES ==========
 function useCountUp(target: number, duration = 1200) {
   const [value, setValue] = useState(0);
   useEffect(() => {
@@ -231,7 +269,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-// ========== COMPONENTE PRINCIPAL HOME ==========
+// ============================================================
+// COMPONENTE PRINCIPAL
+// ============================================================
 export default function Home() {
   const [mounted, setMounted] = useState(false);
   const [filters, setFilters] = useState<{
@@ -246,7 +286,7 @@ export default function Home() {
   const {
     currentStartDate, currentEndDate, period,
     bonusData,
-    ranking, globalConfig, collaborators, currentUser,
+    globalConfig, collaborators, currentUser,
     loadCollaboratorsAndMetrics,
     loadWeeklyPerformanceData,
     rawMetrics,
@@ -256,6 +296,11 @@ export default function Home() {
   const { hasPermission, currentUser: authUser } = useAccessControl();
   const canAccessReports = hasPermission('canAccessReports');
   const canAccessCommissoes = hasPermission('canViewOwnData');
+
+  // ===== ESTADOS LOCAIS PARA RANKING GLOBAL =====
+  const [allCollaborators, setAllCollaborators] = useState<any[]>([]);
+  const [metricsData, setMetricsData] = useState<Record<string, { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number }>>({});
+  const [rankingLoading, setRankingLoading] = useState(false);
 
   const [weeklyEA, setWeeklyEA] = useState<{ day: string; emitidos: number; assinados: number }[]>([]);
   const [weeklyDetailed, setWeeklyDetailed] = useState<{
@@ -267,7 +312,135 @@ export default function Home() {
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
 
-  // ========== Função de recarga ==========
+  // ========== FUNÇÃO PARA CARREGAR RANKING GLOBAL ==========
+  const loadRankingData = useCallback(async () => {
+    if (!currentStartDate || !currentEndDate) return;
+    setRankingLoading(true);
+    try {
+      const collabs = await fetchCollaborators();
+      if (!collabs || collabs.length === 0) {
+        setAllCollaborators([]);
+        setMetricsData({});
+        setRankingLoading(false);
+        return;
+      }
+
+      const endInclusive = new Date(currentEndDate + "T23:59:59");
+      const endExclusive = new Date(endInclusive);
+      endExclusive.setDate(endExclusive.getDate() + 1);
+      const endParam = endExclusive.toISOString().slice(0, 10);
+      const params = { start: currentStartDate, end: endParam };
+
+      const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
+        fetchEmitidos(params),
+        fetchAssinados(params),
+        fetchProtocolados(params),
+        fetchGanhos(params),
+        fetchPerdidos(params),
+      ]);
+
+      const metricsMap: Record<string, { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number }> = {};
+      const aggregate = (data: any[], key: keyof typeof metricsMap[string]) => {
+        data.forEach((item: any) => {
+          const name = item.colaborador;
+          if (!name) return;
+          if (!metricsMap[name]) {
+            metricsMap[name] = { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
+          }
+          metricsMap[name][key] += Number(item.total) || 0;
+        });
+      };
+      aggregate(emitidos, 'emitidos');
+      aggregate(assinados, 'assinados');
+      aggregate(protocolados, 'protocolados');
+      aggregate(ganhos, 'ganhos');
+      aggregate(perdidos, 'perdidos');
+
+      setAllCollaborators(collabs);
+      setMetricsData(metricsMap);
+    } catch (err) {
+      console.error('Erro ao carregar dados de ranking:', err);
+    } finally {
+      setRankingLoading(false);
+    }
+  }, [currentStartDate, currentEndDate]);
+
+  // ========== CÁLCULO DO RANKING GLOBAL (COM PONTUAÇÃO PONDERADA) ==========
+  const globalRanking = useMemo(() => {
+    const eligible = allCollaborators.filter(c => {
+      if (isDesativado(c)) return false;
+      if (isExcludedGroupForDisplay(c.grupo)) return false;
+      if (isExcludedTeam(c.equipeNome)) return false;
+      return true;
+    });
+
+    const withData = eligible
+      .map(c => {
+        const m = metricsData[c.name] || { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
+        const score = calculateWeightedScore({
+          ganhos: m.ganhos || 0,
+          assinados: m.assinados || 0,
+          protocolados: m.protocolados || 0,
+          emitidos: m.emitidos || 0,
+        });
+        return {
+          ...c,
+          ...m,
+          score,
+          name: c.name,
+          id: c.id,
+        };
+      })
+      .filter(item => item.score > 0);
+
+    const sorted = [...withData].sort((a, b) => {
+      if (a.score !== b.score) return b.score - a.score;
+      if (a.ganhos !== b.ganhos) return b.ganhos - a.ganhos;
+      if (a.assinados !== b.assinados) return b.assinados - a.assinados;
+      if (a.protocolados !== b.protocolados) return b.protocolados - a.protocolados;
+      return b.emitidos - a.emitidos;
+    });
+
+    return sorted.map((item, idx) => ({
+      ...item,
+      position: idx + 1,
+    }));
+  }, [allCollaborators, metricsData]);
+
+  // ========== POSIÇÃO DO USUÁRIO ==========
+  const currentUserData = useMemo(() => {
+    if (!currentUser?.id) return null;
+    return collaborators.find(c => c.id === currentUser.id);
+  }, [collaborators, currentUser]);
+
+  const userRank = useMemo(() => {
+    if (!currentUserData) return 0;
+    const found = globalRanking.find(item => item.id === currentUserData.id || item.name === currentUserData.name);
+    return found ? found.position : 0;
+  }, [globalRanking, currentUserData]);
+
+  const totalRanking = globalRanking.length;
+  const currentIndex = useMemo(() => {
+    if (userRank === 0) return -1;
+    return globalRanking.findIndex(item => item.position === userRank);
+  }, [globalRanking, userRank]);
+
+  const aboveUser = currentIndex > 0 ? globalRanking[currentIndex - 1] : null;
+  const belowUser = currentIndex < globalRanking.length - 1 ? globalRanking[currentIndex + 1] : null;
+
+  // ===== SCORE DO USUÁRIO E DIFERENÇA BASEADA EM SCORE =====
+  const userScore = useMemo(() => {
+    if (!currentUserData) return 0;
+    const found = globalRanking.find(item => item.id === currentUserData.id || item.name === currentUserData.name);
+    return found ? found.score : 0;
+  }, [globalRanking, currentUserData]);
+
+  const diffScore = useMemo(() => {
+    if (!aboveUser || currentIndex < 0) return 0;
+    return aboveUser.score - (globalRanking[currentIndex]?.score || 0);
+  }, [aboveUser, currentIndex, globalRanking]);
+
+  // ========== FUNÇÃO DE RECARGA (inclui ranking) ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -276,12 +449,13 @@ export default function Home() {
       await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
       await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
       await loadWeeklyPerformanceData();
+      await loadRankingData();
     } catch (err) {
       console.error("Erro ao recarregar dados:", err);
     } finally {
       if (showRefreshing) setRefreshing(false);
     }
-  }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
+  }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData, loadRankingData]);
 
   const getChartFilterParams = useCallback(() => {
     let equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
@@ -302,7 +476,7 @@ export default function Home() {
     return { equipeApi, colaboradorApi, colaboradorIdApi };
   }, [filters, collaborators]);
 
-  // ========== Efeito de carregamento inicial ==========
+  // ========== CARREGAMENTO INICIAL ==========
   useEffect(() => {
     if (!currentStartDate || !currentEndDate) return;
 
@@ -334,7 +508,7 @@ export default function Home() {
     load();
   }, [currentStartDate, currentEndDate, filters, reloadData]);
 
-  // ========== Polling a cada 60 segundos ==========
+  // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -346,17 +520,14 @@ export default function Home() {
     };
 
     const intervalId = setInterval(refresh, 300000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
   useEffect(() => setMounted(true), []);
 
+  // ========== FILTROS E DADOS PRINCIPAIS ==========
   const isSpecialGroup = filters.produto === 'Quinquenio' || filters.produto === 'Concomitante';
 
-  // ========== FILTRAGEM (apenas para exibição de colaboradores) ==========
   const filteredCollaborators = useMemo(() => {
     return collaborators.filter(c => {
       if (filters.equipe !== "todas" && c.equipeNome !== filters.equipe) return false;
@@ -374,16 +545,10 @@ export default function Home() {
   }, [filteredCollaborators]);
 
   const totals = rawMetrics;
-  const currentUserData = useMemo(() => {
-    if (!currentUser?.id) return null;
-    return collaborators.find(c => c.id === currentUser.id);
-  }, [collaborators, currentUser]);
-
   const periodKey = period === 'Hoje' ? 'diario' : period === 'Semana' ? 'semanal' : 'mensal';
   const pesoAssKey = `meta${periodKey.charAt(0).toUpperCase() + periodKey.slice(1)}Assinados` as keyof Collaborator;
   const pesoGanKey = `meta${periodKey.charAt(0).toUpperCase() + periodKey.slice(1)}Ganhos` as keyof Collaborator;
 
-  // ========== METAS (com suporte à visão geral) ==========
   const isGlobalView = filters.equipe === "todas" && filters.colaborador === "todos";
 
   const { totalTargetAssinados, totalTargetGanhos, totalMetasBatidas } = useMemo(() => {
@@ -404,7 +569,6 @@ export default function Home() {
       };
     }
 
-    // Lógica original (soma das metas individuais)
     let sumAss = 0, sumGan = 0, metas = 0;
     displayCollaborators.forEach(c => {
       const pesoAss = Number(c[pesoAssKey]) || 0;
@@ -451,7 +615,7 @@ export default function Home() {
   }, [currentUserData, isSpecialGroup, period, globalConfig, authUser]);
 
   // ========== GRÁFICOS ==========
-  // Gráfico de emissão vs assinados (para grupos especiais)
+  // (os três useEffects dos gráficos permanecem iguais à versão anterior)
   useEffect(() => {
     if (!isSpecialGroup || !currentStartDate || !currentEndDate) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -489,7 +653,6 @@ export default function Home() {
     fetchWeeklyData();
   }, [isSpecialGroup, currentStartDate, currentEndDate, filters, getChartFilterParams]);
 
-  // Gráfico de performance semanal (leads, assinados, ganhos)
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -545,7 +708,6 @@ export default function Home() {
     fetchWeeklyDetailed();
   }, [isSpecialGroup, filters, getChartFilterParams]);
 
-  // ========== GRÁFICO DE PRODUÇÃO DIÁRIA (com UTC) ==========
   useEffect(() => {
     if (isSpecialGroup) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -666,16 +828,9 @@ export default function Home() {
     { label: "Taxa de Conversão", value: conversaoPercentual, target: 100, unit: "%", icon: TrendingUp, color: "#f59e0b", simple: false },
   ];
 
-  const userRank = currentUser?.rank ?? 0;
-  const totalRanking = currentUser?.totalRanking ?? 0;
-  const currentIndex = ranking.findIndex(item => item.position === userRank);
-  const aboveUser = currentIndex > 0 ? ranking[currentIndex - 1] : null;
-  const diffVendas = aboveUser ? aboveUser.ganhos - ranking[currentIndex].ganhos : 0;
-  const belowUser = currentIndex < ranking.length - 1 ? ranking[currentIndex + 1] : null;
-
   return (
     <DashboardLayout title={`Olá, ${firstName}! 👋`} subtitle="Aqui está o resumo do seu desempenho de hoje!">
-      {/* Indicador de atualização em tempo real */}
+      {/* Indicador de atualização */}
       <div className="flex items-center justify-end gap-2 mb-2">
         {refreshing && (
           <div className="flex items-center gap-1.5 text-xs text-gray-500 animate-pulse">
@@ -890,18 +1045,74 @@ export default function Home() {
               )}
             </div>
 
+            {/* ===== CARD DE RANKING – AGORA COM SCORE ===== */}
             <div className="madm-card p-6 animate-fade-in-up" style={{ animationDelay: "560ms" }}>
-              <div className="flex items-center gap-2 mb-4"><Award className="w-4 h-4 text-[#34a853]" /><span className="text-sm font-bold text-[#09175b]">Seu Ranking</span></div>
-              <div className="rounded-xl p-4 text-center mb-4" style={{ background: "linear-gradient(135deg, #09175b, #1a2f8a)" }}>
-                <div className="text-5xl font-black text-[#34a853] leading-none">#{userRank}</div>
-                <div className="text-white/70 text-xs mt-1">de {totalRanking} consultores</div>
+              <div className="flex items-center gap-2 mb-4">
+                <Award className="w-4 h-4 text-[#34a853]" />
+                <span className="text-sm font-bold text-[#09175b]">Ranking</span>
               </div>
-              <div className="space-y-2">
-                <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Posição acima</span><span className="font-semibold text-[#09175b]">{aboveUser?.name || "—"}</span></div>
-                <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Diferença</span><span className="font-semibold text-red-500">{diffVendas > 0 ? `-${formatInt(diffVendas)} vendas` : "—"}</span></div>
-                <div className="flex items-center justify-between text-xs"><span className="text-gray-500">Posição abaixo</span><span className="font-semibold text-[#34a853]">{belowUser?.name || "—"}</span></div>
-              </div>
-              {canAccessReports && <Link href="/ranking"><button className="mt-4 w-full py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all hover:opacity-90" style={{ background: "#09175b", color: "white" }}>Ver Ranking Completo <ArrowRight className="w-3.5 h-3.5" /></button></Link>}
+
+              {!rankingLoading && globalRanking.length > 0 ? (
+                <>
+                  {userRank > 0 && (
+                    <>
+                      <div className="rounded-xl p-4 text-center mb-4" style={{ background: "linear-gradient(135deg, #09175b, #1a2f8a)" }}>
+                        <div className="text-5xl font-black text-[#34a853] leading-none">#{userRank}</div>
+                        <div className="text-white/70 text-xs mt-1">Sua posição entre {totalRanking} consultores</div>
+                      </div>
+                      <div className="space-y-2 mb-4">
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-500">Posição acima</span>
+                          <span className="font-semibold text-[#09175b]">{aboveUser?.name || "—"}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-500">Diferença (score)</span>
+                          <span className="font-semibold text-red-500">{diffScore > 0 ? `-${formatInt(diffScore)} pts` : "—"}</span>
+                        </div>
+                        <div className="flex items-center justify-between text-xs">
+                          <span className="text-gray-500">Posição abaixo</span>
+                          <span className="font-semibold text-[#34a853]">{belowUser?.name || "—"}</span>
+                        </div>
+                      </div>
+                    </>
+                  )}
+
+                  <div className="border-t border-gray-100 pt-3">
+                    <p className="text-xs text-gray-500 mb-2">
+                      {userRank > 0 ? "🏆 Top 3 do mês" : "🏆 Você não está no ranking. Conheça os líderes:"}
+                    </p>
+                    <div className="space-y-2">
+                      {globalRanking.slice(0, 3).map((item, idx) => {
+                        const medals = ["🥇", "🥈", "🥉"];
+                        return (
+                          <div key={item.id || item.name} className="flex items-center justify-between text-xs">
+                            <div className="flex items-center gap-2">
+                              <span className="text-base">{medals[idx]}</span>
+                              <span className="font-medium text-gray-700">{item.name}</span>
+                              {item.id === currentUserData?.id && (
+                                <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-full bg-[#09175b] text-[#34a853]">VOCÊ</span>
+                              )}
+                            </div>
+                            <span className="font-bold text-[#09175b]">{formatInt(item.score)} pts</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <div className="text-center py-4 text-gray-500 text-xs">
+                  {rankingLoading ? "Carregando ranking..." : "Nenhum dado de ranking disponível para o período atual."}
+                </div>
+              )}
+
+              {canAccessReports && (
+                <Link href="/ranking">
+                  <button className="mt-4 w-full py-2.5 rounded-lg text-xs font-bold flex items-center justify-center gap-1.5 transition-all hover:opacity-90" style={{ background: "#09175b", color: "white" }}>
+                    Ver Ranking Completo <ArrowRight className="w-3.5 h-3.5" />
+                  </button>
+                </Link>
+              )}
             </div>
           </div>
         </>
