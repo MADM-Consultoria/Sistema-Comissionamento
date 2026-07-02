@@ -30,7 +30,7 @@ const navItems = [
   { path: "/ranking", label: "Ranking", icon: Trophy },
   { path: "/relatorio", label: "Relatório", icon: FileCheck },
   //{ path: "/suporte", label: "Suporte", icon: Headphones },
-  { path: "/notificacoes", label: "Notificações", icon: Bell },
+  //{ path: "/notificacoes", label: "Notificações", icon: Bell },
   { path: "/configuration", label: "Configurações", icon: Settings },
 ];
 
