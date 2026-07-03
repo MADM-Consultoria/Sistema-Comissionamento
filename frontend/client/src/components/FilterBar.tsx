@@ -75,7 +75,7 @@ export default function FilterBar({
     return () => clearTimeout(timeout);
   }, [isReady]);
 
-  // ========== CARREGA EQUIPES ==========
+  // ========== CARREGA EQUIPES (fallback) ==========
   useEffect(() => {
     let mounted = true;
     const load = async () => {
@@ -104,10 +104,11 @@ export default function FilterBar({
     return () => { mounted = false; };
   }, [equipeConfigs.length, setEquipeConfigs]);
 
-  // ========== CARREGA COLABORADORES ==========
+  // ========== CARREGA COLABORADORES (fallback) ==========
   useEffect(() => {
     let mounted = true;
     const load = async () => {
+      // Se já tem colaboradores na store, define ready imediatamente
       if (collaborators.length > 0) {
         if (mounted) {
           setIsReady(true);
@@ -127,6 +128,7 @@ export default function FilterBar({
         console.error('Erro ao carregar colaboradores:', err);
         if (mounted) {
           setColabError(err.message || "Falha ao carregar colaboradores");
+          // Mesmo em erro, define ready para não travar a UI
           setIsReady(true);
         }
       } finally {
@@ -220,7 +222,7 @@ export default function FilterBar({
     }
   }, [selectedColaborador, collaborators, isAssessor, isSupervisor, selectedEquipe, equipesDisponiveis, isReady]);
 
-  // ========== NOTIFICAR O PARENT (APENAS QUANDO RESTRIÇÕES APLICADAS E READY) ==========
+  // ========== NOTIFICAR O PARENT (APENAS QUANDO READY E RESTRIÇÕES APLICADAS) ==========
   const onFilterChangeRef = useRef(onFilterChange);
   useEffect(() => {
     onFilterChangeRef.current = onFilterChange;
@@ -435,7 +437,7 @@ export default function FilterBar({
           )}
         </div>
 
-        {/* Filtros ativos (apenas visual) */}
+        {/* Filtros ativos */}
         {hasActiveFilters && (
           <div className="flex items-center gap-2 pt-2 border-t border-gray-100">
             <Filter className="w-3 h-3 text-gray-400" />

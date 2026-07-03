@@ -26,6 +26,9 @@ import {
   fetchCollaborators,
 } from "@/lib/api";
 
+// ========== FUNÇÃO AUXILIAR PARA FORMATAÇÃO DE INTEIROS ==========
+const formatInt = (num: number) => num?.toLocaleString('pt-BR') ?? '0';
+
 const API_BASE = import.meta.env.VITE_API_URL || "http://localhost:3007/api";
 
 // ========== EQUIPAS EXCLUÍDAS ==========
@@ -115,7 +118,7 @@ const CustomTooltip = ({ active, payload, label }: any) => {
         <p className="font-semibold text-gray-700 mb-1">{label}</p>
         {payload.map((entry: any, i: number) => (
           <p key={i} style={{ color: entry.color }} className="font-medium">
-            {entry.name}: {entry.value}
+            {entry.name}: {formatInt(entry.value)}
           </p>
         ))}
       </div>
@@ -131,7 +134,7 @@ function KpiCard({
   icon: React.ElementType; color: string; delay?: number; simple?: boolean;
 }) {
   const pct = target > 0 ? Math.round((value / target) * 100) : 0;
-  const displayValue = unit === "R$" ? formatCurrency(value) : unit === "%" ? `${value.toFixed(1)}%` : value.toString();
+  const displayValue = unit === "R$" ? formatCurrency(value) : unit === "%" ? `${value.toFixed(1)}%` : formatInt(value);
 
   return (
     <div className="madm-card p-4 animate-fade-in-up" style={{ animationDelay: `${delay}ms` }}>
@@ -154,7 +157,7 @@ function KpiCard({
             <div className="madm-progress-fill" style={{ width: `${Math.min(pct, 100)}%` }} />
           </div>
           <div className="text-[10px] text-gray-400 mt-1">
-            Meta: {unit === "R$" ? formatCurrency(target) : target}
+            Meta: {unit === "R$" ? formatCurrency(target) : formatInt(target)}
           </div>
         </>
       )}
@@ -195,6 +198,9 @@ export default function Analytics() {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
 
+  // Controle para evitar carregamento com filtros iniciais vazios
+  const [isFirstFilterApplied, setIsFirstFilterApplied] = useState(false);
+
   const equipe = filters.equipe;
   const colaborador = filters.colaborador;
   const colaboradorId = filters.colaboradorId;
@@ -205,6 +211,19 @@ export default function Analytics() {
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
   const isFetchingRef = useRef(false);
   const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFetchChartTime = useRef<number>(0);
+  const CHART_CACHE_TTL = 60000; // 1 minuto
+
+  // ========== TIMEOUT DE SEGURANÇA: FORÇA O PRIMEIRO FILTRO APÓS 3 SEGUNDOS ==========
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!isFirstFilterApplied) {
+        console.warn("⏱️ Analytics: timeout de segurança forçando primeiro filtro");
+        setIsFirstFilterApplied(true);
+      }
+    }, 3000);
+    return () => clearTimeout(timeout);
+  }, [isFirstFilterApplied]);
 
   // ========== Verificar se o usuário é excluído ==========
   const currentUserData = useMemo(() => {
@@ -219,30 +238,51 @@ export default function Analytics() {
     setIsExcluded(teamExcluded || groupExcluded);
   }, [currentUserData]);
 
-  // ========== Função de recarga dos dados ==========
+  // ========== Função de recarga dos dados (com verificação de necessidade) ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
+    const datesChanged =
+      currentStartDate !== lastDatesRef.current.start ||
+      currentEndDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    // Se nada mudou e já carregou, não recarrega (exceto se rawMetrics estiver vazio)
+    const metricsEmpty = rawMetrics.assinados === 0 && rawMetrics.emitidos === 0 && rawMetrics.ganhos === 0;
+    if (initialLoadDone.current && !datesChanged && !filtersChanged && !metricsEmpty) {
+      return;
+    }
+
     if (showRefreshing) setRefreshing(true);
     try {
       const equipeApi = equipe === "todas" ? undefined : equipe;
       const colaboradorApi = colaborador === "todos" ? undefined : colaborador;
       const produtoApi = produto === "Todos" ? undefined : produto;
-      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorId, produtoApi);
-      await loadRawMetrics({
-        equipeNome: equipeApi,
-        colaboradorNome: colaboradorApi,
-        colaboradorId: colaboradorId,
-        produto: produtoApi,
-      });
-      await loadWeeklyPerformanceData();
+
+      if (datesChanged || filtersChanged || metricsEmpty) {
+        await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorId, produtoApi);
+        await loadRawMetrics({
+          equipeNome: equipeApi,
+          colaboradorNome: colaboradorApi,
+          colaboradorId: colaboradorId,
+          produto: produtoApi,
+        });
+        await loadWeeklyPerformanceData();
+      }
+
+      lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
+      lastFiltersRef.current = { ...filters };
+      initialLoadDone.current = true;
     } catch (err) {
       console.error("❌ Analytics: erro ao recarregar dados:", err);
     } finally {
       if (showRefreshing) setRefreshing(false);
       setLoading(false);
     }
-  }, [equipe, colaborador, colaboradorId, produto, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
+  }, [currentStartDate, currentEndDate, filters, equipe, colaborador, colaboradorId, produto, rawMetrics, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
-  // ========== Carregamento inicial e quando filtros/datas mudarem ==========
+  // ========== CARREGAMENTO INICIAL – SÓ ACONTECE APÓS O PRIMEIRO FILTRO ==========
   useEffect(() => {
     if (!currentStartDate || !currentEndDate) return;
 
@@ -253,6 +293,11 @@ export default function Analytics() {
       filters.equipe !== lastFiltersRef.current.equipe ||
       filters.colaborador !== lastFiltersRef.current.colaborador ||
       filters.produto !== lastFiltersRef.current.produto;
+
+    // Só carrega se já recebeu o primeiro filtro ou se já carregou antes
+    const shouldLoad = isFirstFilterApplied || initialLoadDone.current;
+
+    if (!shouldLoad) return;
 
     if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
 
@@ -285,7 +330,7 @@ export default function Analytics() {
     };
 
     load();
-  }, [currentStartDate, currentEndDate, filters, reloadData, loading]);
+  }, [currentStartDate, currentEndDate, filters, reloadData, loading, isFirstFilterApplied]);
 
   // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
@@ -301,6 +346,14 @@ export default function Analytics() {
     const intervalId = setInterval(refresh, 300000);
     return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
+
+  // ========== HANDLER DO FILTERBAR ==========
+  const handleFilterChange = (newFilters: any) => {
+    setFilters(newFilters);
+    if (!isFirstFilterApplied) {
+      setIsFirstFilterApplied(true);
+    }
+  };
 
   // ========== BUSCA DO BÔNUS ==========
   useEffect(() => {
@@ -364,15 +417,13 @@ export default function Analytics() {
     fetchBonus();
   }, [currentUser, currentStartDate, isExcluded]);
 
-  // ========== GRÁFICO DE EVOLUÇÃO DIÁRIA ==========
+  // ========== GRÁFICO DE EVOLUÇÃO DIÁRIA (COM CACHE) ==========
   const chartDateRange = useMemo(() => {
     return getChartDateRange(period, currentStartDate, currentEndDate);
   }, [period, currentStartDate, currentEndDate]);
 
-  // Estado de versão para forçar recarga quando necessário (ex: após polling)
   const [chartVersion, setChartVersion] = useState(0);
 
-  // Incrementa chartVersion após recarga para forçar atualização do gráfico
   const reloadDataWithChart = useCallback(async (showRefreshing = false) => {
     if (showRefreshing) setRefreshing(true);
     try {
@@ -396,7 +447,7 @@ export default function Analytics() {
     }
   }, [equipe, colaborador, colaboradorId, produto, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
 
-  // Efeito principal do gráfico
+  // Efeito principal do gráfico (com cache)
   useEffect(() => {
     if (!chartDateRange.start || !chartDateRange.end) return;
 
@@ -406,6 +457,14 @@ export default function Analytics() {
     const fetchChartData = async () => {
       if (isFetchingRef.current) return;
       isFetchingRef.current = true;
+
+      const now = Date.now();
+      const shouldFetch = (now - lastFetchChartTime.current) > CHART_CACHE_TTL || dailyChartData.length === 0;
+
+      if (!shouldFetch && dailyChartData.length > 0) {
+        isFetchingRef.current = false;
+        return;
+      }
 
       try {
         const equipeApi = equipe === "todas" ? undefined : equipe;
@@ -498,6 +557,7 @@ export default function Analytics() {
         });
 
         setDailyChartData(chartArray);
+        lastFetchChartTime.current = Date.now();
 
         const totalLeadsSum = Array.from(dataMap.values()).reduce((s, v) => s + v.leads, 0);
         const totalAssinadosSum = Array.from(dataMap.values()).reduce((s, v) => s + v.assinados, 0);
@@ -519,7 +579,7 @@ export default function Analytics() {
       abortController.abort();
       isFetchingRef.current = false;
     };
-  }, [chartDateRange, equipe, colaborador, colaboradorId, produto, period, chartVersion]);
+  }, [chartDateRange, equipe, colaborador, colaboradorId, produto, period, chartVersion, dailyChartData.length]);
 
   // ========== DADOS PARA KPIS ==========
   const totals = rawMetrics;
@@ -609,10 +669,6 @@ export default function Analytics() {
   const COLORS = ["#09175b", "#34a853", "#045b5b", "#f59e0b", "#ef4444"];
   const hasActiveFilters = equipe !== "todas" || colaborador !== "todos" || produto !== "Todos";
 
-  const handleFilterChange = (newFilters: any) => {
-    setFilters(newFilters);
-  };
-
   const renderBonusCard = () => {
     if (isExcluded) {
       return (
@@ -656,6 +712,18 @@ export default function Analytics() {
 
   const chartPeriodDesc = period === "Hoje" ? "(semana atual)" : period === "Semana" ? "(duas últimas semanas, apenas dias úteis)" : "";
   const isGraphLoading = isFirstLoad && dailyChartData.length === 0 && !apiError;
+
+  // Se o primeiro filtro ainda não foi aplicado, exibe um loader
+  if (!isFirstFilterApplied) {
+    return (
+      <DashboardLayout title="Analytics" subtitle="Métricas avançadas, comissões e indicadores de performance">
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+          <span className="ml-2 text-gray-500">Aguardando configuração dos filtros...</span>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   if (loading && collaborators.length === 0) {
     return (
@@ -711,22 +779,22 @@ export default function Analytics() {
             {percentAssinados >= 100 ? <TrendingUp className="w-4 h-4 text-green-500" /> : <TrendingDown className="w-4 h-4 text-red-500" />}
           </div>
           <div className="text-2xl font-black text-[#09175b]">{percentAssinados.toFixed(1)}%</div>
-          <div className="text-xs text-gray-400 mt-1">{totals.assinados} / {targetAssinados} assinados</div>
+          <div className="text-xs text-gray-400 mt-1">{formatInt(totals.assinados)} / {formatInt(targetAssinados)} assinados</div>
           <div className="madm-progress-bar mt-2"><div className="madm-progress-fill" style={{ width: `${Math.min(percentAssinados, 100)}%` }} /></div>
         </div>
         <div className="madm-card p-4 animate-fade-in-up" style={{ animationDelay: "80ms" }}>
           <div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-500">Taxa de Conversão</span><Target className="w-4 h-4 text-[#09175b]" /></div>
           <div className="text-2xl font-black text-[#09175b]">{taxaConversaoGeral.toFixed(1)}%</div>
-          <div className="text-xs text-gray-400 mt-1">{totalAssinados} vendas / {totalLeads} leads</div>
+          <div className="text-xs text-gray-400 mt-1">{formatInt(totalAssinados)} vendas / {formatInt(totalLeads)} leads</div>
         </div>
         <div className="madm-card p-4 animate-fade-in-up" style={{ animationDelay: "160ms" }}>
           <div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-500">Média Diária (assinados)</span><ShoppingBag className="w-4 h-4 text-[#34a853]" /></div>
           <div className="text-2xl font-black text-[#09175b]">{mediaDiariaVendas.toFixed(1)}</div>
-          <div className="text-xs text-gray-400 mt-1">últimos {dailyChartData.length} dias</div>
+          <div className="text-xs text-gray-400 mt-1">últimos {formatInt(dailyChartData.length)} dias</div>
         </div>
         <div className="madm-card p-4 animate-fade-in-up" style={{ animationDelay: "240ms" }}>
           <div className="flex items-center justify-between mb-2"><span className="text-xs text-gray-500">Total de Leads</span><Users className="w-4 h-4 text-[#f59e0b]" /></div>
-          <div className="text-2xl font-black text-[#09175b]">{totalLeads}</div>
+          <div className="text-2xl font-black text-[#09175b]">{formatInt(totalLeads)}</div>
           <div className="text-xs text-gray-400 mt-1">no período</div>
         </div>
       </div>
@@ -793,7 +861,7 @@ export default function Analytics() {
               <div key={i} className="flex items-center gap-1.5">
                 <div className="w-2.5 h-2.5 rounded-full" style={{ background: item.color || COLORS[i % COLORS.length] }} />
                 <span className="text-[10px] text-gray-600">{item.name}</span>
-                <span className="text-[10px] font-bold text-gray-800">{item.value}</span>
+                <span className="text-[10px] font-bold text-gray-800">{formatInt(item.value)}</span>
               </div>
             ))}
           </div>
@@ -820,19 +888,19 @@ export default function Analytics() {
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2"><Award className="w-4 h-4 text-[#34a853]" /><span className="text-xs font-semibold text-gray-700">Metas Batidas</span></div>
-            <div className="text-2xl font-black text-[#09175b]">{userMetasBatidas}</div>
+            <div className="text-2xl font-black text-[#09175b]">{formatInt(userMetasBatidas)}</div>
             <div className="text-xs text-gray-500">suas metas batidas</div>
           </div>
           {renderBonusCard()}
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2"><TrendingUp className="w-4 h-4 text-[#34a853]" /><span className="text-xs font-semibold text-gray-700">Assinados</span></div>
-            <div className="text-2xl font-black text-[#09175b]">{totals.assinados}</div>
-            <div className="text-xs text-gray-500">meta: {targetAssinados}</div>
+            <div className="text-2xl font-black text-[#09175b]">{formatInt(totals.assinados)}</div>
+            <div className="text-xs text-gray-500">meta: {formatInt(targetAssinados)}</div>
           </div>
           <div className="bg-gray-50 rounded-xl p-4">
             <div className="flex items-center gap-2 mb-2"><FileCheck className="w-4 h-4 text-[#045b5b]" /><span className="text-xs font-semibold text-gray-700">Ganhos</span></div>
-            <div className="text-2xl font-black text-[#09175b]">{totals.ganhos}</div>
-            <div className="text-xs text-gray-500">{isSpecialGroup ? "Meta não se aplica" : `meta: ${targetGanhos}`}</div>
+            <div className="text-2xl font-black text-[#09175b]">{formatInt(totals.ganhos)}</div>
+            <div className="text-xs text-gray-500">{isSpecialGroup ? "Meta não se aplica" : `meta: ${formatInt(targetGanhos)}`}</div>
           </div>
         </div>
       </div>

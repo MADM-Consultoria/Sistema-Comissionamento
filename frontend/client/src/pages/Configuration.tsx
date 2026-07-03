@@ -1,5 +1,5 @@
 // src/pages/Configuration.tsx
-import React, { useState, useEffect, useMemo } from "react";
+import React, { useState, useEffect, useMemo, useRef } from "react";
 import { useLocation } from "wouter";
 import DashboardLayout from "@/components/DashboardLayout";
 import {
@@ -21,7 +21,6 @@ const EXCLUDED_TEAMS = [
   'Equipe Leonardo Cardoso', 'Equipe Julia', 'Equipe Leticia', 'Dr. Felipe Marx','Administrativo',
   'Equipe Thales','Financeiro'
 ];
-
 
 const isExcludedTeam = (teamName: string) => EXCLUDED_TEAMS.includes(teamName);
 type CicloPeriodo = 'diario' | 'semanal' | 'mensal';
@@ -105,6 +104,9 @@ export default function Configuration() {
   const isBonusEditable = canEditBonus && !isLocked;
   const isAllDisabled = !canEditConfiguration || isLocked;
 
+  // ========== CACHE DE COLABORADORES POR MÊS ==========
+  const collaboratorsCache = useRef<Map<string, any[]>>(new Map());
+
   // ========== API MESES ==========
   const refreshMonths = async () => {
     setLoadingMonths(true);
@@ -139,9 +141,17 @@ export default function Configuration() {
   useEffect(() => { refreshMonths(); }, []);
   useEffect(() => { if (!monthsError) refreshMonths(); }, [selectedMonth]);
 
-  // ========== CARREGAMENTO DE COLABORADORES ==========
+  // ========== CARREGAMENTO DE COLABORADORES (COM CACHE) ==========
   const loadCollaboratorsForMonth = async (month: string) => {
     if (!month || !/^\d{4}-\d{2}-\d{2}$/.test(month)) return;
+    
+    // Verifica cache
+    if (collaboratorsCache.current.has(month)) {
+      const cached = collaboratorsCache.current.get(month)!;
+      setCollaborators(cached);
+      return;
+    }
+
     const mesParam = `?mes=${month.substring(0, 7)}`;
     try {
       const collabs = await fetchCollaborators(mesParam);
@@ -151,6 +161,7 @@ export default function Configuration() {
         if (!uniqueMap.has(key)) uniqueMap.set(key, c);
       });
       const uniqueCollabs = Array.from(uniqueMap.values());
+      collaboratorsCache.current.set(month, uniqueCollabs);
       setCollaborators(uniqueCollabs);
       if (uniqueCollabs.length === 0) toast.warning('Nenhum colaborador encontrado para este mês.');
     } catch (err: any) {
@@ -162,8 +173,10 @@ export default function Configuration() {
     if (selectedMonth) loadCollaboratorsForMonth(selectedMonth);
   }, [selectedMonth]);
 
-  // Equipes
+  // ========== CARREGAMENTO DE EQUIPES (uma vez) ==========
+  const equipesLoaded = useRef(false);
   useEffect(() => {
+    if (equipesLoaded.current) return;
     const loadBaseData = async () => {
       try {
         const equipes = await fetchEquipes();
@@ -173,6 +186,7 @@ export default function Configuration() {
           pesoAssinados: 3, pesoGanhos: 3,
           pesoequipeAssinados: 0, pesoequipeGanhos: 0, bonus: 150,
         })));
+        equipesLoaded.current = true;
       } catch (error: any) {
         if (error.message?.includes('401')) window.location.href = '/login';
         else toast.error(`Falha ao carregar dados base: ${error.message}`);
@@ -181,7 +195,12 @@ export default function Configuration() {
     loadBaseData();
   }, [setEquipeConfigs]);
 
+  // ========== CARREGAR MÉTRICAS APENAS SE DATAS MUDAREM ==========
+  const lastMetricsLoad = useRef({ start: '', end: '' });
   useEffect(() => {
+    if (!currentStartDate || !currentEndDate) return;
+    if (lastMetricsLoad.current.start === currentStartDate && lastMetricsLoad.current.end === currentEndDate) return;
+    lastMetricsLoad.current = { start: currentStartDate, end: currentEndDate };
     loadMetricsForPeriod({ equipeNome: undefined, colaboradorNome: undefined, produto: undefined });
   }, [currentStartDate, currentEndDate, loadMetricsForPeriod]);
 
@@ -297,6 +316,8 @@ export default function Configuration() {
       const data = await res.json();
       if (data.success) {
         toast.success(`Metas ${selectedPeriod} globais aplicadas!`);
+        // Invalidar cache do mês para recarregar
+        collaboratorsCache.current.delete(selectedMonth);
         await loadCollaboratorsForMonth(selectedMonth);
       } else toast.error(data.error || 'Erro ao salvar');
     } catch { toast.error('Erro de conexão'); }
@@ -323,6 +344,7 @@ export default function Configuration() {
       const data = await res.json();
       if (data.success) {
         toast.success(`Metas ${teamPeriod} da equipe ${teamSelected} atualizadas!`);
+        collaboratorsCache.current.delete(selectedMonth);
         await loadCollaboratorsForMonth(selectedMonth);
       } else toast.error(data.error || "Erro ao salvar");
     } catch (err) {
@@ -366,6 +388,7 @@ export default function Configuration() {
       const data = await res.json();
       if (data.success) {
         toast.success(`Meta ${selectedPeriod} de ${collab.name} atualizada!`);
+        collaboratorsCache.current.delete(selectedMonth);
         await loadCollaboratorsForMonth(selectedMonth);
       } else {
         toast.error(data.error || 'Erro ao salvar');
@@ -416,6 +439,7 @@ export default function Configuration() {
       const data = await res.json();
       if (data.success) {
         toast.success(`Bônus de ${collab.name} atualizado para ${formatCurrency(editBonusValue)}`);
+        collaboratorsCache.current.delete(selectedMonth);
         await loadCollaboratorsForMonth(selectedMonth);
       } else {
         toast.error(data.error || 'Erro ao salvar bônus');
@@ -468,6 +492,7 @@ export default function Configuration() {
     try {
       const result = await recalculateHierarchyWeights();
       toast.success(result.message || 'Hierarquia recalculada com sucesso!');
+      collaboratorsCache.current.delete(selectedMonth);
       await loadCollaboratorsForMonth(selectedMonth);
     } catch (err: any) {
       toast.error(err.message || 'Erro ao recalcular hierarquia');

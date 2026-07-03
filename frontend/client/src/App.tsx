@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -25,6 +25,9 @@ import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
 import { Loader2 } from "lucide-react";
 
+// ============================================================
+// HEARTBEAT: mantém a sessão ativa
+// ============================================================
 function startHeartbeat(): NodeJS.Timeout {
   const interval = setInterval(async () => {
     try {
@@ -40,14 +43,12 @@ function startHeartbeat(): NodeJS.Timeout {
 function Router() {
   return (
     <Switch>
-      {/* Rotas públicas */}
       <Route path="/login" component={Login} />
       <Route path="/verify-2fa" component={Verify2FA} />
       <Route path="/forgot-password" component={ForgotPassword} />
       <Route path="/reset-password" component={ResetPassword} />
       <Route path="/404" component={NotFound} />
 
-      {/* Rotas protegidas */}
       <Route path="/">
         <PeriodProvider>
           <ProtectedRoute>
@@ -124,9 +125,17 @@ function Router() {
 }
 
 export default function App() {
-  const { currentUser, setCurrentUser } = useAppStore();
+  const {
+    currentUser,
+    setCurrentUser,
+    collaborators,
+    loadCollaboratorsAndMetrics,
+    loadRawMetrics,
+    loadWeeklyPerformanceData,
+  } = useAppStore();
+
   const [appLoading, setAppLoading] = useState(true);
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean | null>(null);
+  const initialLoadDone = useRef(false);
 
   // Busca token CSRF
   useEffect(() => {
@@ -140,23 +149,19 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Verifica sessão
+  // Restaura sessão e carrega dados iniciais (UMA ÚNICA VEZ)
   useEffect(() => {
     let isMounted = true;
     let timeoutId: NodeJS.Timeout | null = null;
 
-    const checkSession = async () => {
+    const init = async () => {
       try {
         console.log('🔐 [App] Verificando sessão...');
         const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
 
         if (!res.ok) {
           console.log('ℹ️ [App] Sessão não encontrada (status:', res.status, ')');
-          if (isMounted) {
-            setCurrentUser(null);
-            setIsAuthenticated(false);
-            setAppLoading(false);
-          }
+          if (isMounted) setAppLoading(false);
           return;
         }
 
@@ -165,47 +170,57 @@ export default function App() {
 
         if (data.success && data.user && data.user.id) {
           console.log('✅ [App] Sessão restaurada para:', data.user.name);
-          if (isMounted) {
-            setCurrentUser(data.user);
-            setIsAuthenticated(true);
+          setCurrentUser(data.user);
+
+          // Carrega dados iniciais apenas se ainda não foram carregados
+          if (!initialLoadDone.current || collaborators.length === 0) {
+            console.log('⏳ [App] Carregando dados iniciais...');
+            
+            await Promise.race([
+              Promise.all([
+                loadCollaboratorsAndMetrics(undefined, undefined, undefined, undefined),
+                loadRawMetrics({}), // objeto vazio = todos os dados sem filtros
+                loadWeeklyPerformanceData(),
+              ]),
+              new Promise((_, reject) =>
+                setTimeout(() => reject(new Error('Timeout ao carregar dados iniciais')), 15000)
+              ),
+            ]);
+            initialLoadDone.current = true;
+            console.log('✅ [App] Dados iniciais carregados com sucesso');
+          } else {
+            console.log('ℹ️ [App] Dados já carregados, pulando recarga');
           }
         } else {
           console.log('ℹ️ [App] Sessão inválida ou incompleta');
-          if (isMounted) {
-            setCurrentUser(null);
-            setIsAuthenticated(false);
-          }
-        }
-      } catch (err) {
-        console.error('❌ [App] Erro na verificação de sessão:', err);
-        if (isMounted) {
           setCurrentUser(null);
-          setIsAuthenticated(false);
         }
-      } finally {
+
+        if (isMounted) setAppLoading(false);
+      } catch (err) {
+        console.error('❌ [App] Erro na inicialização:', err);
+        setCurrentUser(null);
         if (isMounted) setAppLoading(false);
       }
     };
 
-    checkSession();
+    init();
 
-    // Timeout de segurança: se demorar mais de 5 segundos, força finalização
+    // Timeout de segurança: força fim do loading após 20 segundos
     timeoutId = setTimeout(() => {
       if (isMounted && appLoading) {
-        console.warn('⏱️ [App] Timeout de segurança (5s): forçando fim do carregamento');
-        setCurrentUser(null);
-        setIsAuthenticated(false);
+        console.warn('⏱️ [App] Timeout de segurança (20s): forçando fim do carregamento');
         setAppLoading(false);
       }
-    }, 5000);
+    }, 20000);
 
     return () => {
       isMounted = false;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, []); // executa apenas uma vez
+  }, [loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData, setCurrentUser, collaborators.length, appLoading]);
 
-  // Heartbeat para manter a sessão ativa
+  // Heartbeat
   useEffect(() => {
     if (!currentUser) return;
     const interval = startHeartbeat();
@@ -225,7 +240,7 @@ export default function App() {
       .catch(() => {});
   }, [currentUser]);
 
-  // Enquanto estiver carregando, exibe loader
+  // Enquanto carrega, exibe loader
   if (appLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
@@ -235,7 +250,6 @@ export default function App() {
     );
   }
 
-  // Renderiza o roteador
   return (
     <ErrorBoundary>
       <ThemeProvider defaultTheme="light">
