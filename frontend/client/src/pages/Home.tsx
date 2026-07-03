@@ -26,7 +26,7 @@ import {
 } from "@/lib/api";
 
 // ============================================================
-// CONSTANTES DE EXCLUSÃO (ALINHADAS COM A PÁGINA RANKING)
+// CONSTANTES DE EXCLUSÃO
 // ============================================================
 const EXCLUDED_TEAMS = [
   'Equipe SAC', 'Sales Ops', 'Equipe', 'Equipe Lucilene', 'Equipe SDR','Equipe Camila',
@@ -74,7 +74,7 @@ const isDesativado = (c: any) => {
 };
 
 // ============================================================
-// FUNÇÃO DE PONTUAÇÃO PONDERADA (MESMA DA PÁGINA RANKING)
+// FUNÇÃO DE PONTUAÇÃO PONDERADA
 // ============================================================
 function calculateWeightedScore(
   item: { ganhos: number; assinados: number; protocolados: number; emitidos: number }
@@ -301,6 +301,8 @@ export default function Home() {
   const [allCollaborators, setAllCollaborators] = useState<any[]>([]);
   const [metricsData, setMetricsData] = useState<Record<string, { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number }>>({});
   const [rankingLoading, setRankingLoading] = useState(false);
+  const rankingLastFetch = useRef<number>(0);
+  const RANKING_CACHE_TTL = 60000;
 
   const [weeklyEA, setWeeklyEA] = useState<{ day: string; emitidos: number; assinados: number }[]>([]);
   const [weeklyDetailed, setWeeklyDetailed] = useState<{
@@ -315,6 +317,12 @@ export default function Home() {
   // ========== FUNÇÃO PARA CARREGAR RANKING GLOBAL ==========
   const loadRankingData = useCallback(async () => {
     if (!currentStartDate || !currentEndDate) return;
+
+    const now = Date.now();
+    if (allCollaborators.length > 0 && (now - rankingLastFetch.current) < RANKING_CACHE_TTL) {
+      return;
+    }
+
     setRankingLoading(true);
     try {
       const collabs = await fetchCollaborators();
@@ -358,14 +366,15 @@ export default function Home() {
 
       setAllCollaborators(collabs);
       setMetricsData(metricsMap);
+      rankingLastFetch.current = Date.now();
     } catch (err) {
       console.error('Erro ao carregar dados de ranking:', err);
     } finally {
       setRankingLoading(false);
     }
-  }, [currentStartDate, currentEndDate]);
+  }, [currentStartDate, currentEndDate, allCollaborators.length]);
 
-  // ========== CÁLCULO DO RANKING GLOBAL (COM PONTUAÇÃO PONDERADA) ==========
+  // ========== CÁLCULO DO RANKING GLOBAL ==========
   const globalRanking = useMemo(() => {
     const eligible = allCollaborators.filter(c => {
       if (isDesativado(c)) return false;
@@ -407,7 +416,7 @@ export default function Home() {
     }));
   }, [allCollaborators, metricsData]);
 
-  // ========== POSIÇÃO DO USUÁRIO ==========
+  // ========== POSIÇÃO DO USUÁRIO E SCORE ==========
   const currentUserData = useMemo(() => {
     if (!currentUser?.id) return null;
     return collaborators.find(c => c.id === currentUser.id);
@@ -428,7 +437,6 @@ export default function Home() {
   const aboveUser = currentIndex > 0 ? globalRanking[currentIndex - 1] : null;
   const belowUser = currentIndex < globalRanking.length - 1 ? globalRanking[currentIndex + 1] : null;
 
-  // ===== SCORE DO USUÁRIO E DIFERENÇA BASEADA EM SCORE =====
   const userScore = useMemo(() => {
     if (!currentUserData) return 0;
     const found = globalRanking.find(item => item.id === currentUserData.id || item.name === currentUserData.name);
@@ -440,22 +448,46 @@ export default function Home() {
     return aboveUser.score - (globalRanking[currentIndex]?.score || 0);
   }, [aboveUser, currentIndex, globalRanking]);
 
-  // ========== FUNÇÃO DE RECARGA (inclui ranking) ==========
+  // ========== FUNÇÃO DE RECARGA ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
+    const datesChanged =
+      currentStartDate !== lastDatesRef.current.start ||
+      currentEndDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    // Se nada mudou e já carregou, não recarrega (exceto se rawMetrics estiver vazio)
+    const metricsEmpty = rawMetrics.assinados === 0 && rawMetrics.emitidos === 0 && rawMetrics.ganhos === 0;
+    if (initialLoadDone.current && !datesChanged && !filtersChanged && !metricsEmpty) {
+      return;
+    }
+
     if (showRefreshing) setRefreshing(true);
     try {
       const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
       const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
-      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
-      await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
-      await loadWeeklyPerformanceData();
-      await loadRankingData();
+
+      if (datesChanged || filtersChanged || metricsEmpty) {
+        await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
+        await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
+        await loadWeeklyPerformanceData();
+        if (datesChanged) {
+          await loadRankingData();
+        }
+      }
+
+      lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
+      lastFiltersRef.current = { ...filters };
+      initialLoadDone.current = true;
     } catch (err) {
       console.error("Erro ao recarregar dados:", err);
     } finally {
       if (showRefreshing) setRefreshing(false);
+      setLoading(false);
     }
-  }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData, loadRankingData]);
+  }, [filters, currentStartDate, currentEndDate, rawMetrics, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData, loadRankingData]);
 
   const getChartFilterParams = useCallback(() => {
     let equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
@@ -479,33 +511,8 @@ export default function Home() {
   // ========== CARREGAMENTO INICIAL ==========
   useEffect(() => {
     if (!currentStartDate || !currentEndDate) return;
-
-    const datesChanged =
-      currentStartDate !== lastDatesRef.current.start ||
-      currentEndDate !== lastDatesRef.current.end;
-    const filtersChanged =
-      filters.equipe !== lastFiltersRef.current.equipe ||
-      filters.colaborador !== lastFiltersRef.current.colaborador ||
-      filters.produto !== lastFiltersRef.current.produto;
-
-    if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
-
-    lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
-    lastFiltersRef.current = { ...filters };
-
-    const load = async () => {
-      setLoading(true);
-      try {
-        await reloadData(false);
-        initialLoadDone.current = true;
-      } catch (err) {
-        console.error("Erro ao carregar dados:", err);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    load();
+    setLoading(true);
+    reloadData(false);
   }, [currentStartDate, currentEndDate, filters, reloadData]);
 
   // ========== POLLING A CADA 5 MINUTOS ==========
@@ -522,6 +529,13 @@ export default function Home() {
     const intervalId = setInterval(refresh, 300000);
     return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
+
+  // Carrega ranking inicial se necessário
+  useEffect(() => {
+    if (currentStartDate && currentEndDate && allCollaborators.length === 0) {
+      loadRankingData();
+    }
+  }, [currentStartDate, currentEndDate, allCollaborators.length, loadRankingData]);
 
   useEffect(() => setMounted(true), []);
 
@@ -615,7 +629,6 @@ export default function Home() {
   }, [currentUserData, isSpecialGroup, period, globalConfig, authUser]);
 
   // ========== GRÁFICOS ==========
-  // (os três useEffects dos gráficos permanecem iguais à versão anterior)
   useEffect(() => {
     if (!isSpecialGroup || !currentStartDate || !currentEndDate) return;
     const { equipeApi, colaboradorApi, colaboradorIdApi } = getChartFilterParams();
@@ -1045,14 +1058,14 @@ export default function Home() {
               )}
             </div>
 
-            {/* ===== CARD DE RANKING – AGORA COM SCORE ===== */}
+            {/* ===== CARD DE RANKING ===== */}
             <div className="madm-card p-6 animate-fade-in-up" style={{ animationDelay: "560ms" }}>
               <div className="flex items-center gap-2 mb-4">
                 <Award className="w-4 h-4 text-[#34a853]" />
                 <span className="text-sm font-bold text-[#09175b]">Ranking</span>
               </div>
 
-              {!rankingLoading && globalRanking.length > 0 ? (
+              {globalRanking.length > 0 ? (
                 <>
                   {userRank > 0 && (
                     <>

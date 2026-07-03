@@ -80,7 +80,7 @@ function obterBonusCiclo(colaborador: any, configEquipe: any[], configGlobal: an
   return equipe?.bonus || configGlobal.valorBonus;
 }
 
-// ========== COMPONENTE DE TOOLTIP EXTERNO (evita recriação) ==========
+// ========== COMPONENTE DE TOOLTIP EXTERNO ==========
 const CustomTooltip = ({ active, payload, label }: any) => {
   if (active && payload?.length) {
     return (
@@ -114,44 +114,36 @@ export default function Comissoes() {
 
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [loadingMessage, setLoadingMessage] = useState("Carregando dados...");
   const [error, setError] = useState<string | null>(null);
+
+  // ===== CONTROLE PARA EVITAR CARREGAMENTO COM FILTROS INICIAIS VAZIOS =====
+  const [isFirstFilterApplied, setIsFirstFilterApplied] = useState(false);
 
   const initialLoadDone = useRef(false);
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
-  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
-  const isMountedRef = useRef(true);
+  const isLoadingRef = useRef(false);
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+
+  // ========== TIMEOUT DE SEGURANÇA: FORÇA O PRIMEIRO FILTRO APÓS 3 SEGUNDOS ==========
+  useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (!isFirstFilterApplied) {
+        console.warn("⏱️ Comissoes: timeout de segurança forçando primeiro filtro");
+        setIsFirstFilterApplied(true);
+      }
+    }, 3000);
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [isFirstFilterApplied]);
 
   // ========== FUNÇÃO DE RECARGA ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
-    if (showRefreshing) setRefreshing(true);
-    try {
-      const equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
-      const colaboradorApi = filters.colaborador === "todos" ? undefined : filters.colaborador;
-      const colaboradorIdApi = filters.colaboradorId;
-      const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
-      await loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi);
-      await loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi });
-      await loadWeeklyPerformanceData();
-      setError(null);
-    } catch (err: any) {
-      console.error("❌ Comissoes: erro ao recarregar dados:", err);
-      if (isMountedRef.current) {
-        setError(err.message || "Falha ao recarregar dados.");
-      }
-    } finally {
-      if (showRefreshing && isMountedRef.current) {
-        setRefreshing(false);
-      }
-    }
-  }, [filters, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
-
-  // ========== CARREGAMENTO INICIAL E QUANDO FILTROS/DATAS MUDAM ==========
-  useEffect(() => {
-    isMountedRef.current = true;
-    if (!currentStartDate || !currentEndDate) {
-      if (isMountedRef.current) setLoading(false);
+    // Evita múltiplas execuções simultâneas
+    if (isLoadingRef.current) {
+      console.log('ℹ️ Comissoes: já está carregando, ignorando');
       return;
     }
 
@@ -163,53 +155,93 @@ export default function Comissoes() {
       filters.colaborador !== lastFiltersRef.current.colaborador ||
       filters.produto !== lastFiltersRef.current.produto;
 
+    // Se nada mudou e já carregou, não recarrega
     if (initialLoadDone.current && !datesChanged && !filtersChanged) {
-      if (isMountedRef.current) setLoading(false);
+      console.log('ℹ️ Comissoes: dados já carregados, pulando recarga');
       return;
     }
 
-    lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
-    lastFiltersRef.current = { ...filters };
+    console.log('🔄 Comissoes: recarregando dados...', { datesChanged, filtersChanged });
 
-    const load = async () => {
-      if (isMountedRef.current) {
-        setLoading(true);
-        setError(null);
-        setLoadingMessage("Carregando dados...");
+    isLoadingRef.current = true;
+    if (showRefreshing) setRefreshing(true);
+    
+    try {
+      const equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
+      const colaboradorApi = filters.colaborador === "todos" ? undefined : filters.colaborador;
+      const colaboradorIdApi = filters.colaboradorId;
+      const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
+
+      await Promise.all([
+        loadCollaboratorsAndMetrics(equipeApi, colaboradorApi, colaboradorIdApi, produtoApi),
+        loadRawMetrics({ equipeNome: equipeApi, colaboradorNome: colaboradorApi, colaboradorId: colaboradorIdApi, produto: produtoApi }),
+        loadWeeklyPerformanceData(),
+      ]);
+
+      lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
+      lastFiltersRef.current = { ...filters };
+      initialLoadDone.current = true;
+      setError(null);
+      console.log('✅ Comissoes: dados carregados com sucesso');
+    } catch (err: any) {
+      console.error("❌ Comissoes: erro ao recarregar dados:", err);
+      setError(err.message || "Falha ao recarregar dados.");
+    } finally {
+      isLoadingRef.current = false;
+      if (showRefreshing) setRefreshing(false);
+      setLoading(false);
+    }
+  }, [filters, currentStartDate, currentEndDate, loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData]);
+
+  // ========== HANDLER DO FILTERBAR ==========
+  const handleFilterChange = (newFilters: {
+    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
+  }) => {
+    setFilters(newFilters);
+    if (!isFirstFilterApplied) {
+      setIsFirstFilterApplied(true);
+    }
+  };
+
+  // ========== CARREGAMENTO INICIAL – SÓ ACONTECE APÓS O PRIMEIRO FILTRO ==========
+  useEffect(() => {
+    // Se o primeiro filtro ainda não foi aplicado, não carrega
+    if (!isFirstFilterApplied) {
+      console.log('ℹ️ Comissoes: aguardando primeiro filtro');
+      return;
+    }
+
+    if (!currentStartDate || !currentEndDate) {
+      setLoading(false);
+      return;
+    }
+
+    const datesChanged =
+      currentStartDate !== lastDatesRef.current.start ||
+      currentEndDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    // Se já carregou e nada mudou, não recarrega
+    if (initialLoadDone.current && !datesChanged && !filtersChanged) {
+      setLoading(false);
+      return;
+    }
+
+    // Timeout de segurança para evitar loading infinito
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (loading) {
+        console.warn("⏱️ Comissoes: timeout de segurança forçando fim do loading");
+        setLoading(false);
       }
+    }, 15000);
 
-      // Timeout de segurança (10 segundos)
-      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
-      timeoutIdRef.current = setTimeout(() => {
-        if (isMountedRef.current && loading) {
-          console.warn("⏱️ Comissoes: timeout de segurança forçando fim do loading");
-          setLoading(false);
-          setError("O carregamento demorou mais que o esperado. Tente recarregar a página.");
-        }
-      }, 10000);
-
-      try {
-        await reloadData(false);
-        if (isMountedRef.current) {
-          initialLoadDone.current = true;
-          setLoading(false);
-        }
-      } catch (err: any) {
-        if (isMountedRef.current) {
-          setError(err.message || "Falha ao carregar dados.");
-          setLoading(false);
-        }
-      } finally {
-        if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
-      }
-    };
-
-    load();
-
-    return () => {
-      if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
-    };
-  }, [currentStartDate, currentEndDate, filters, reloadData, loading]);
+    setLoading(true);
+    reloadData(false);
+  }, [currentStartDate, currentEndDate, filters, reloadData, isFirstFilterApplied, loading]);
 
   // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
@@ -217,7 +249,7 @@ export default function Comissoes() {
 
     const refresh = async () => {
       if (refreshing) return;
-      if (document.visibilityState === 'visible' && isMountedRef.current) {
+      if (document.visibilityState === 'visible') {
         await reloadData(true);
       }
     };
@@ -296,15 +328,6 @@ export default function Comissoes() {
     return sum / commissionData.length;
   }, [commissionData]);
 
-  const handleFilterChange = (newFilters: {
-    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
-  }) => {
-    setFilters(newFilters);
-  };
-
-  const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
-
-  // Cartões de resumo
   const summaryCards = [
     {
       label: "Comissão Total Estimada", value: totals.comissao, icon: DollarSign,
@@ -330,6 +353,20 @@ export default function Comissoes() {
     },
   ];
 
+  const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
+
+  // Se o primeiro filtro ainda não foi aplicado, exibe um loader
+  if (!isFirstFilterApplied) {
+    return (
+      <DashboardLayout title="Painel de Comissões" subtitle="Comissão calculada pela soma de metas batidas diárias, semanais e mensais">
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+          <span className="ml-2 text-gray-500">Aguardando configuração dos filtros...</span>
+        </div>
+      </DashboardLayout>
+    );
+  }
+
   return (
     <DashboardLayout title="Painel de Comissões" subtitle="Comissão calculada pela soma de metas batidas diárias, semanais e mensais">
       <div className="flex items-center justify-end gap-2 mb-2">
@@ -349,7 +386,7 @@ export default function Comissoes() {
       {loading && (
         <div className="flex justify-center items-center py-8">
           <Loader2 className="w-6 h-6 animate-spin text-[#09175b]" />
-          <span className="ml-2 text-sm text-gray-500">{loadingMessage}</span>
+          <span className="ml-2 text-sm text-gray-500">Carregando dados...</span>
         </div>
       )}
 

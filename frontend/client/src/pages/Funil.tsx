@@ -181,7 +181,6 @@ export default function Funil() {
     period,
     collaborators: rawCollaborators,
     loadMetricsForPeriod,
-    loadLeadsByStage,
     rawMetrics,
     loadRawMetrics,
     loadWeeklyPerformanceData,
@@ -196,6 +195,8 @@ export default function Funil() {
     produto: string;
   }>({ equipe: "todas", colaborador: "todos", produto: "Todos" });
 
+  const [isFirstFilterApplied, setIsFirstFilterApplied] = useState(false);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [loadingLeads, setLoadingLeads] = useState(false);
@@ -204,9 +205,40 @@ export default function Funil() {
   const initialLoadDone = useRef(false);
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: currentStartDate, end: currentEndDate });
+  const timeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const lastFetchLeads = useRef<number>(0);
+  const LEADS_CACHE_TTL = 60000;
 
-  // ========== Função de recarga (compartilhada) ==========
+  // ========== TIMEOUT DE SEGURANÇA: FORÇA O PRIMEIRO FILTRO APÓS 3 SEGUNDOS ==========
+  useEffect(() => {
+    if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    timeoutRef.current = setTimeout(() => {
+      if (!isFirstFilterApplied) {
+        console.warn("⏱️ Funil: timeout de segurança forçando primeiro filtro");
+        setIsFirstFilterApplied(true);
+      }
+    }, 3000);
+    return () => {
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, [isFirstFilterApplied]);
+
+  // ========== Função de recarga (com verificação de necessidade) ==========
   const reloadData = useCallback(async (showRefreshing = false) => {
+    const datesChanged =
+      currentStartDate !== lastDatesRef.current.start ||
+      currentEndDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    // Se nada mudou e já carregou, não recarrega (exceto se rawMetrics estiver vazio)
+    const metricsEmpty = rawMetrics.assinados === 0 && rawMetrics.emitidos === 0 && rawMetrics.ganhos === 0;
+    if (initialLoadDone.current && !datesChanged && !filtersChanged && !metricsEmpty) {
+      return;
+    }
+
     if (showRefreshing) setRefreshing(true);
     try {
       const equipeApi = filters.equipe === "todas" ? undefined : filters.equipe;
@@ -214,49 +246,65 @@ export default function Funil() {
       const colaboradorIdApi = filters.colaboradorId;
       const produtoApi = filters.produto === "Todos" ? undefined : filters.produto;
 
-      await loadMetricsForPeriod({
-        equipeNome: equipeApi,
-        colaboradorNome: colaboradorApi,
-        colaboradorId: colaboradorIdApi,
-        produto: produtoApi,
-      });
-
-      await loadRawMetrics({
-        equipeNome: equipeApi,
-        colaboradorNome: colaboradorApi,
-        colaboradorId: colaboradorIdApi,
-        produto: produtoApi,
-      });
-
-      await loadWeeklyPerformanceData();
-
-      // Buscar leads com intervalo estendido para "Hoje"
-      const dateRange = getChartDateRange(period, currentStartDate, currentEndDate);
-      setLoadingLeads(true);
-      try {
-        const stagesData = await fetchLeadsByStage({
-          start: dateRange.start,
-          end: dateRange.end,
-          equipe: equipeApi,
-          colaborador: colaboradorApi,
+      if (datesChanged || filtersChanged || metricsEmpty) {
+        await loadMetricsForPeriod({
+          equipeNome: equipeApi,
+          colaboradorNome: colaboradorApi,
           colaboradorId: colaboradorIdApi,
           produto: produtoApi,
         });
-        setLeadsStageData(stagesData);
-      } catch (err) {
-        console.error("Erro ao buscar leads por etapa:", err);
-        setLeadsStageData([]);
-      } finally {
-        setLoadingLeads(false);
+
+        await loadRawMetrics({
+          equipeNome: equipeApi,
+          colaboradorNome: colaboradorApi,
+          colaboradorId: colaboradorIdApi,
+          produto: produtoApi,
+        });
+
+        await loadWeeklyPerformanceData();
       }
+
+      // Buscar leads com intervalo estendido para "Hoje"
+      const dateRange = getChartDateRange(period, currentStartDate, currentEndDate);
+      
+      const now = Date.now();
+      const shouldFetchLeads = datesChanged || filtersChanged || 
+        (leadsStageData.length === 0) || 
+        (now - lastFetchLeads.current) > LEADS_CACHE_TTL;
+
+      if (shouldFetchLeads) {
+        setLoadingLeads(true);
+        try {
+          const stagesData = await fetchLeadsByStage({
+            start: dateRange.start,
+            end: dateRange.end,
+            equipe: equipeApi,
+            colaborador: colaboradorApi,
+            colaboradorId: colaboradorIdApi,
+            produto: produtoApi,
+          });
+          setLeadsStageData(stagesData);
+          lastFetchLeads.current = Date.now();
+        } catch (err) {
+          console.error("Erro ao buscar leads por etapa:", err);
+          setLeadsStageData([]);
+        } finally {
+          setLoadingLeads(false);
+        }
+      }
+
+      lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
+      lastFiltersRef.current = { ...filters };
+      initialLoadDone.current = true;
     } catch (error) {
       console.error("Erro ao recarregar dados do Funil:", error);
     } finally {
       if (showRefreshing) setRefreshing(false);
+      setLoading(false);
     }
-  }, [filters, period, currentStartDate, currentEndDate, loadMetricsForPeriod, loadRawMetrics, loadWeeklyPerformanceData]);
+  }, [filters, period, currentStartDate, currentEndDate, rawMetrics, loadMetricsForPeriod, loadRawMetrics, loadWeeklyPerformanceData, leadsStageData.length]);
 
-  // ========== Carregamento inicial e quando filtros/datas mudarem ==========
+  // ========== CARREGAMENTO INICIAL – SÓ ACONTECE APÓS O PRIMEIRO FILTRO ==========
   useEffect(() => {
     if (!currentStartDate || !currentEndDate) return;
 
@@ -268,27 +316,16 @@ export default function Funil() {
       filters.colaborador !== lastFiltersRef.current.colaborador ||
       filters.produto !== lastFiltersRef.current.produto;
 
+    const shouldLoad = isFirstFilterApplied || initialLoadDone.current;
+    if (!shouldLoad) return;
+
     if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
 
-    lastDatesRef.current = { start: currentStartDate, end: currentEndDate };
-    lastFiltersRef.current = { ...filters };
+    setLoading(true);
+    reloadData(false);
+  }, [currentStartDate, currentEndDate, filters, reloadData, isFirstFilterApplied]);
 
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        await reloadData(false);
-        initialLoadDone.current = true;
-      } catch (error) {
-        console.error("Erro ao carregar dados do Funil:", error);
-      } finally {
-        setLoading(false);
-      }
-    };
-
-    loadData();
-  }, [currentStartDate, currentEndDate, filters, reloadData]);
-
-  // ========== ATUALIZAÇÃO PERIÓDICA (polling a cada 60 segundos) ==========
+  // ========== POLLING A CADA 5 MINUTOS ==========
   useEffect(() => {
     if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
 
@@ -300,13 +337,23 @@ export default function Funil() {
     };
 
     const intervalId = setInterval(refresh, 300000);
-
-    return () => {
-      clearInterval(intervalId);
-    };
+    return () => clearInterval(intervalId);
   }, [currentStartDate, currentEndDate, reloadData, refreshing]);
 
-  // Filtragem local
+  // ========== HANDLER DO FILTERBAR ==========
+  const handleFilterChange = (newFilters: {
+    equipe: string;
+    colaborador: string;
+    colaboradorId?: number;
+    produto: string;
+  }) => {
+    setFilters(newFilters);
+    if (!isFirstFilterApplied) {
+      setIsFirstFilterApplied(true);
+    }
+  };
+
+  // Filtragem local para exibição
   const filteredCollaborators = useMemo(() => {
     let filtered = [...rawCollaborators];
     if (filters.equipe !== "todas") {
@@ -342,7 +389,6 @@ export default function Funil() {
 
   const totalBase = funnelData[0]?.count || 1;
 
-  // Taxas de conversão
   const conversionByStage = useMemo(() => {
     const conversions = [];
     const emitidos = funnelData[0]?.count || 0;
@@ -398,15 +444,6 @@ export default function Funil() {
       .sort((a, b) => b.totalLeads - a.totalLeads);
   }, [leadsStageData, activeCollaboratorNames]);
 
-  const handleFilterChange = (newFilters: {
-    equipe: string;
-    colaborador: string;
-    colaboradorId?: number;
-    produto: string;
-  }) => {
-    setFilters(newFilters);
-  };
-
   const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
 
   const getStageColor = (stage: string) => {
@@ -423,6 +460,18 @@ export default function Funil() {
   };
 
   const isFirstLeadLoad = loadingLeads && leadsStageData.length === 0;
+
+  // Se o primeiro filtro ainda não foi aplicado, exibe um loader
+  if (!isFirstFilterApplied) {
+    return (
+      <DashboardLayout title="Funil de Vendas" subtitle="Acompanhe a jornada das oportunidades — da emissão ao resultado final">
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+          <span className="ml-2 text-gray-500">Aguardando configuração dos filtros...</span>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Funil de Vendas" subtitle="Acompanhe a jornada das oportunidades — da emissão ao resultado final">
@@ -444,7 +493,7 @@ export default function Funil() {
       {loading && (
         <div className="flex justify-center items-center py-4">
           <Loader2 className="w-5 h-5 animate-spin text-[#09175b]" />
-          <span className="ml-2 text-sm text-gray-500">Atualizando dados...</span>
+          <span className="ml-2 text-sm text-gray-500">Carregando dados...</span>
         </div>
       )}
 

@@ -78,12 +78,6 @@ function getWeekNumber(date: Date): string {
   return `${date.getFullYear()}-S${week}`;
 }
 
-/**
- * Retorna o intervalo de datas padrão com base na granularidade:
- * - daily   → semana atual (segunda a domingo)
- * - weekly  → mês atual
- * - monthly → últimos 12 meses
- */
 function getDefaultDateRange(granularity: Granularity): { start: string; end: string } {
   const today = new Date();
   let start: Date, end: Date = new Date(today);
@@ -91,9 +85,8 @@ function getDefaultDateRange(granularity: Granularity): { start: string; end: st
 
   switch (granularity) {
     case "daily": {
-      // Semana atual (segunda a domingo)
       const day = today.getDay();
-      const diff = day === 0 ? -6 : 1 - day; // se domingo (0), vai para segunda (-6)
+      const diff = day === 0 ? -6 : 1 - day;
       start = new Date(today);
       start.setDate(today.getDate() + diff);
       start.setHours(0, 0, 0, 0);
@@ -103,14 +96,12 @@ function getDefaultDateRange(granularity: Granularity): { start: string; end: st
       break;
     }
     case "weekly": {
-      // Mês atual (primeiro ao último dia)
       start = new Date(today.getFullYear(), today.getMonth(), 1);
       end = new Date(today.getFullYear(), today.getMonth() + 1, 0);
       end.setHours(23, 59, 59, 999);
       break;
     }
     case "monthly": {
-      // Últimos 12 meses (a partir do primeiro dia do mês atual, 12 meses atrás)
       start = new Date(today.getFullYear() - 1, today.getMonth(), 1);
       end = today;
       break;
@@ -125,9 +116,6 @@ function getDefaultDateRange(granularity: Granularity): { start: string; end: st
   return { start: fmt(start), end: fmt(end) };
 }
 
-/**
- * Agrupa dados diários em semanais ou mensais.
- */
 function aggregateDailyData(
   dailyData: { date: string; [key: string]: any }[],
   granularity: Granularity
@@ -197,6 +185,24 @@ export default function Relatorio() {
   const initialLoadDone = useRef(false);
   const lastFiltersRef = useRef(filters);
   const lastDatesRef = useRef({ start: startDate, end: endDate });
+  const timeoutIdRef = useRef<NodeJS.Timeout | null>(null);
+  const isMountedRef = useRef(true);
+  const lastFetchTime = useRef<number>(0);
+  const CACHE_TTL = 60000;
+
+  // ===== CONTROLE PARA EVITAR CARREGAMENTO COM FILTROS INICIAIS VAZIOS =====
+  const [isFirstFilterApplied, setIsFirstFilterApplied] = useState(false);
+
+  // ===== TIMEOUT DE SEGURANÇA: FORÇA O PRIMEIRO FILTRO APÓS 3 SEGUNDOS =====
+  useEffect(() => {
+    const timeout = setTimeout(() => {
+      if (!isFirstFilterApplied) {
+        console.warn("⏱️ Relatório: timeout de segurança forçando primeiro filtro");
+        setIsFirstFilterApplied(true);
+      }
+    }, 3000);
+    return () => clearTimeout(timeout);
+  }, [isFirstFilterApplied]);
 
   // ============================================================
   // CARREGA COLABORADORES
@@ -217,10 +223,27 @@ export default function Relatorio() {
   }, [collaborators]);
 
   // ============================================================
-  // REQUISIÇÃO DE MÉTRICAS
+  // REQUISIÇÃO DE MÉTRICAS (COM VERIFICAÇÃO DE NECESSIDADE)
   // ============================================================
-  const fetchData = useCallback(async () => {
+  const fetchData = useCallback(async (force = false) => {
     if (!startDate || !endDate) return;
+
+    const datesChanged =
+      startDate !== lastDatesRef.current.start ||
+      endDate !== lastDatesRef.current.end;
+    const filtersChanged =
+      filters.equipe !== lastFiltersRef.current.equipe ||
+      filters.colaborador !== lastFiltersRef.current.colaborador ||
+      filters.produto !== lastFiltersRef.current.produto;
+
+    const now = Date.now();
+    const cacheValid = (now - lastFetchTime.current) < CACHE_TTL;
+    const hasData = rawDailyData.assinados.length > 0 || rawDailyData.emitidos.length > 0;
+
+    if (!force && initialLoadDone.current && !datesChanged && !filtersChanged && cacheValid && hasData) {
+      return;
+    }
+
     setLoading(true);
     setError(null);
 
@@ -264,17 +287,32 @@ export default function Relatorio() {
         ganhos: filterByValidColabs(ganhos),
         perdidos: filterByValidColabs(perdidos),
       });
+      lastFetchTime.current = Date.now();
+      lastDatesRef.current = { start: startDate, end: endDate };
+      lastFiltersRef.current = { ...filters };
+      initialLoadDone.current = true;
     } catch (err: any) {
       console.error("❌ [Relatório] Erro:", err);
       setError(err.message || "Erro desconhecido");
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
     }
-  }, [startDate, endDate, filters, validCollaboratorNames]);
+  }, [startDate, endDate, filters, validCollaboratorNames, rawDailyData]);
 
-  // ===== ATUALIZAÇÃO QUANDO FILTROS/DATAS MUDAM =====
+  // ===== HANDLER DO FILTERBAR =====
+  const handleFilterChange = useCallback((newFilters: {
+    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
+  }) => {
+    setFilters(newFilters);
+    if (!isFirstFilterApplied) setIsFirstFilterApplied(true);
+  }, [isFirstFilterApplied]);
+
+  // ===== ATUALIZAÇÃO QUANDO FILTROS/DATAS MUDAM (APÓS O PRIMEIRO FILTRO) =====
   useEffect(() => {
     if (!startDate || !endDate) return;
+
+    const shouldLoad = isFirstFilterApplied || initialLoadDone.current;
+    if (!shouldLoad) return;
 
     const datesChanged =
       startDate !== lastDatesRef.current.start ||
@@ -286,28 +324,32 @@ export default function Relatorio() {
 
     if (initialLoadDone.current && !datesChanged && !filtersChanged) return;
 
-    lastDatesRef.current = { start: startDate, end: endDate };
-    lastFiltersRef.current = { ...filters };
+    // Timeout de segurança
+    if (timeoutIdRef.current) clearTimeout(timeoutIdRef.current);
+    timeoutIdRef.current = setTimeout(() => {
+      if (isMountedRef.current && loading) {
+        console.warn("⏱️ Relatório: timeout de segurança forçando fim do loading");
+        setLoading(false);
+      }
+    }, 15000);
 
-    fetchData().then(() => {
-      initialLoadDone.current = true;
-    });
-  }, [startDate, endDate, filters, fetchData]);
+    fetchData(false);
+  }, [startDate, endDate, filters, fetchData, loading, isFirstFilterApplied]);
 
-  // ===== POLLING A CADA 60s =====
+  // ===== POLLING A CADA 5 MINUTOS =====
   useEffect(() => {
     if (!initialLoadDone.current || !startDate || !endDate) return;
 
     const refresh = async () => {
       if (refreshing) return;
-      if (document.visibilityState === 'visible') {
+      if (document.visibilityState === 'visible' && isMountedRef.current) {
         setRefreshing(true);
         try {
-          await fetchData();
+          await fetchData(true);
         } catch (err) {
           console.error("Erro ao atualizar relatório:", err);
         } finally {
-          setRefreshing(false);
+          if (isMountedRef.current) setRefreshing(false);
         }
       }
     };
@@ -402,12 +444,8 @@ export default function Relatorio() {
   }, [rawDailyData, collaborators, validCollaboratorNames, pesoAssKey, pesoGanKey, isSpecialProduct]);
 
   // ============================================================
-  // HANDLERS
+  // HANDLERS DE UI
   // ============================================================
-  const handleFilterChange = useCallback((newFilters: {
-    equipe: string; colaborador: string; colaboradorId?: number; produto: string;
-  }) => setFilters(newFilters), []);
-
   const toggleMetric = (metric: MetricKey) => {
     if (!availableMetrics.includes(metric)) return;
     setSelectedMetrics(prev => prev.includes(metric) ? prev.filter(m => m !== metric) : [...prev, metric]);
@@ -464,26 +502,21 @@ export default function Relatorio() {
     if (startDate === endDate && granularity !== "daily") setGranularity("daily");
   }, [startDate, endDate, granularity]);
 
-  // ===== QUANDO A GRANULARIDADE MUDA, RESETA AS DATAS (SE NÃO FOR MANUAL) =====
   const handleGranularityChange = (newGranularity: Granularity) => {
     setGranularity(newGranularity);
     if (!manuallySetDates) {
       const { start, end } = getDefaultDateRange(newGranularity);
       setStartDate(start);
       setEndDate(end);
-      // Não resetamos manuallySetDates para false, pois se o usuário já tinha definido datas manualmente, ele não quer perder.
-      // Se ele nunca definiu, permanece false.
     }
   };
 
-  // ===== QUANDO O USUÁRIO MUDA AS DATAS MANUALMENTE =====
   const handleDateChange = (type: 'start' | 'end', value: string) => {
     setManuallySetDates(true);
     if (type === 'start') setStartDate(value);
     else setEndDate(value);
   };
 
-  // ===== BOTÃO PARA RESETAR DATAS AO CICLO ATUAL =====
   const resetDatesToCycle = () => {
     const { start, end } = getDefaultDateRange(granularity);
     setStartDate(start);
@@ -492,9 +525,19 @@ export default function Relatorio() {
   };
 
   const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
-
-  // Label do ciclo para exibição
   const cycleLabel = granularity === 'daily' ? 'Semana atual' : granularity === 'weekly' ? 'Mês atual' : 'Últimos 12 meses';
+
+  // Se o primeiro filtro ainda não foi aplicado, exibe um loader
+  if (!isFirstFilterApplied) {
+    return (
+      <DashboardLayout title="Relatório Avançado" subtitle="Analise o desempenho por período personalizado">
+        <div className="flex justify-center items-center py-12">
+          <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
+          <span className="ml-2 text-gray-500">Aguardando configuração dos filtros...</span>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout title="Relatório Avançado" subtitle={`Analise o desempenho por período personalizado — ${cycleLabel}`}>

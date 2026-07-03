@@ -18,242 +18,44 @@ import {
 // ============================================================
 // TIPOS COMPLETOS
 // ============================================================
-export interface KpiItem {
-  value: number;
-  target: number;
-  unit: string;
-  label: string;
-}
-
-export interface KpiData {
-  comissaoMes: KpiItem;
-  vendasFechadas: KpiItem;
-  protocolados: KpiItem;
-  taxaConversao: KpiItem;
-}
-
-export interface EquipeConfig {
-  id: string;
-  nome: string;
-  pesoAssinados: number;
-  pesoGanhos: number;
-  pesoequipeAssinados: number;
-  pesoequipeGanhos: number;
-  bonus: number;
-}
-
+export interface KpiItem { value: number; target: number; unit: string; label: string; }
+export interface KpiData { comissaoMes: KpiItem; vendasFechadas: KpiItem; protocolados: KpiItem; taxaConversao: KpiItem; }
+export interface EquipeConfig { id: string; nome: string; pesoAssinados: number; pesoGanhos: number; pesoequipeAssinados: number; pesoequipeGanhos: number; bonus: number; }
 export interface Collaborator {
-  id: number;
-  name: string;
-  email: string;
-  equipeId: string;
-  equipeNome: string;
-  avatar: string;
-  emitidos: number;
-  assinados: number;
-  protocolados: number;
-  ganhos: number;
-  perdidos: number;
-  metaAssinados: number;
-  metaGanhos: number;
-  bonusPorCiclo: number;
-  bonusRecebido: number;
-  status: "ativo" | "inativo";
-  produto: string;
-  grupo: string;
-  metaDiarioAssinados?: number;
-  metaDiarioGanhos?: number;
-  metaSemanalAssinados?: number;
-  metaSemanalGanhos?: number;
-  metaMensalAssinados?: number;
-  metaMensalGanhos?: number;
-  comissao?: number;
-  bonusComissao?: number;
-  pesoDiarioAssinados: number;
-  pesoDiarioGanhos: number;
-  pesoSemanalAssinados: number;
-  pesoSemanalGanhos: number;
-  pesoMensalAssinados: number;
-  pesoMensalGanhos: number;
+  id: number; name: string; email: string; equipeId: string; equipeNome: string; avatar: string;
+  emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number;
+  metaAssinados: number; metaGanhos: number; bonusPorCiclo: number; bonusRecebido: number;
+  status: "ativo" | "inativo"; produto: string; grupo: string;
+  metaDiarioAssinados?: number; metaDiarioGanhos?: number; metaSemanalAssinados?: number; metaSemanalGanhos?: number;
+  metaMensalAssinados?: number; metaMensalGanhos?: number; comissao?: number; bonusComissao?: number;
+  pesoDiarioAssinados: number; pesoDiarioGanhos: number; pesoSemanalAssinados: number; pesoSemanalGanhos: number;
+  pesoMensalAssinados: number; pesoMensalGanhos: number;
 }
-
 export interface GlobalConfig {
-  pesoMetaAssinados: number;
-  pesoMetaGanhos: number;
-  pesoMetaequipeAssinados: number;
-  pesoMetaequipeGanhos: number;
-  valorBonus: number;
-  metaDiaria: number;
-  metaSemanal: number;
-  metaMensal: number;
-  metaLeadsDiaria: number;
-  metaLeadsSemanal: number;
-  metaLeadsMensal: number;
-  pesoDiarioAssinados: number;
-  pesoDiarioGanhos: number;
-  pesoSemanalAssinados: number;
-  pesoSemanalGanhos: number;
-  pesoMensalAssinados: number;
-  pesoMensalGanhos: number;
+  pesoMetaAssinados: number; pesoMetaGanhos: number; pesoMetaequipeAssinados: number; pesoMetaequipeGanhos: number;
+  valorBonus: number; metaDiaria: number; metaSemanal: number; metaMensal: number;
+  metaLeadsDiaria: number; metaLeadsSemanal: number; metaLeadsMensal: number;
+  pesoDiarioAssinados: number; pesoDiarioGanhos: number; pesoSemanalAssinados: number; pesoSemanalGanhos: number;
+  pesoMensalAssinados: number; pesoMensalGanhos: number;
 }
-
-export interface DailyData {
-  id: string;
-  colaboradorId: number;
-  date: string;
-  emitidos: number;
-  assinados: number;
-  ganhos: number;
-  perdidos: number;
-}
-
-export interface Meta3x3 {
-  assinados: number;
-  ganhos: number;
-  metaBatida: number;
-  valorPorMeta: number;
-  totalGanho: number;
-  pesoMetaAssinados: number;
-  pesoMetaGanhos: number;
-  pesoMetaequipeAssinados: number;
-  pesoMetaequipeGanhos: number;
-  produto: string;
-  metaDiaria: number;
-  metaSemanal: number;
-  metaMensal: number;
-}
-
-export interface BonusData {
-  active: boolean;
-  label: string;
-  description: string;
-  threshold: number;
-  current: number;
-  bonusValue: number;
-}
-
-export interface WeeklyPerformance {
-  day: string;
-  vendas: number;
-  meta: number;
-}
-
-export interface DailyProduction {
-  date: string;
-  vendas: number;
-  leads: number;
-}
-
-export interface User {
-  id: number;
-  name: string;
-  email: string;
-  equipe: string;
-  grupo: string;
-  status: string;
-  periodo: string;
-  avatar?: string;
-  role?: string;
-  rank?: number;
-  totalRanking?: number;
-}
-
-export interface RankingItem {
-  position: number;
-  name: string;
-  emitidos: number;
-  assinados: number;
-  ganhos: number;
-  avatar: string;
-  trend: 'up' | 'down' | 'same';
-  isCurrentUser?: boolean;
-}
-
-export interface CommissionItem {
-  id: number;
-  colaboradorId: number;
-  cliente: string;
-  produto: string;
-  valor: number;
-  status: 'pago' | 'pendente' | 'processando';
-  data: string;
-  comissao: number;
-}
-
-export interface CommissionSummary {
-  totalAcumulado: number;
-  pendente: number;
-  pago: number;
-  processando: number;
-  mediaVenda: number;
-}
-
-export interface FunnelStage {
-  stage: string;
-  count: number;
-  color: string;
-  icon: string;
-  description: string;
-}
-
-export interface ConversionRate {
-  stage: string;
-  value: number;
-}
-
-export interface RadarMetric {
-  metric: string;
-  value: number;
-}
-
-export interface ProductivityData {
-  semana: string;
-  taxa: number;
-  vendas: number;
-}
-
-export interface StatsCard {
-  label: string;
-  value: string;
-  unit: string;
-  trend: string;
-  up: boolean;
-  color: string;
-  bg: string;
-  icon: string;
-}
-
-export interface Notification {
-  id: number;
-  type: 'warning' | 'danger' | 'success' | 'info' | 'orientacao';
-  title: string;
-  message: string;
-  action: string;
-  time: string;
-  read: boolean;
-  images?: string[];
-}
-
-export interface InsightCard {
-  icon: string;
-  title: string;
-  description: string;
-  action: string;
-  color: string;
-  bg: string;
-  urgency: string;
-  urgencyColor: string;
-}
-
+export interface DailyData { id: string; colaboradorId: number; date: string; emitidos: number; assinados: number; ganhos: number; perdidos: number; }
+export interface Meta3x3 { assinados: number; ganhos: number; metaBatida: number; valorPorMeta: number; totalGanho: number; pesoMetaAssinados: number; pesoMetaGanhos: number; pesoMetaequipeAssinados: number; pesoMetaequipeGanhos: number; produto: string; metaDiaria: number; metaSemanal: number; metaMensal: number; }
+export interface BonusData { active: boolean; label: string; description: string; threshold: number; current: number; bonusValue: number; }
+export interface WeeklyPerformance { day: string; vendas: number; meta: number; }
+export interface DailyProduction { date: string; vendas: number; leads: number; }
+export interface User { id: number; name: string; email: string; equipe: string; grupo: string; status: string; periodo: string; avatar?: string; role?: string; rank?: number; totalRanking?: number; }
+export interface RankingItem { position: number; name: string; emitidos: number; assinados: number; ganhos: number; avatar: string; trend: 'up' | 'down' | 'same'; isCurrentUser?: boolean; }
+export interface CommissionItem { id: number; colaboradorId: number; cliente: string; produto: string; valor: number; status: 'pago' | 'pendente' | 'processando'; data: string; comissao: number; }
+export interface CommissionSummary { totalAcumulado: number; pendente: number; pago: number; processando: number; mediaVenda: number; }
+export interface FunnelStage { stage: string; count: number; color: string; icon: string; description: string; }
+export interface ConversionRate { stage: string; value: number; }
+export interface RadarMetric { metric: string; value: number; }
+export interface ProductivityData { semana: string; taxa: number; vendas: number; }
+export interface StatsCard { label: string; value: string; unit: string; trend: string; up: boolean; color: string; bg: string; icon: string; }
+export interface Notification { id: number; type: 'warning' | 'danger' | 'success' | 'info' | 'orientacao'; title: string; message: string; action: string; time: string; read: boolean; images?: string[]; }
+export interface InsightCard { icon: string; title: string; description: string; action: string; color: string; bg: string; urgency: string; urgencyColor: string; }
 export type Period = 'Hoje' | 'Semana' | 'Mês' | 'Custom';
-
-export interface RawMetrics {
-  emitidos: number;
-  assinados: number;
-  protocolados: number;
-  ganhos: number;
-  perdidos: number;
-}
+export interface RawMetrics { emitidos: number; assinados: number; protocolados: number; ganhos: number; perdidos: number; }
 
 // ============================================================
 // FUNÇÕES AUXILIARES
@@ -264,13 +66,11 @@ function normalizeGroup(group: string | undefined): string {
 
 function applyHierarchyTotals(collaborators: Collaborator[]): Collaborator[] {
   if (!collaborators.length) return collaborators;
-
   const updated = collaborators.map(c => ({ ...c }));
   const supervisors = updated.filter(c => normalizeGroup(c.grupo) === 'supervisor');
   const coordAdmins = updated.filter(c =>
     ['coordenador', 'administrativo'].includes(normalizeGroup(c.grupo))
   );
-
   const sumMetrics = (list: Collaborator[]) => ({
     emitidos: list.reduce((s, c) => s + (c.emitidos || 0), 0),
     assinados: list.reduce((s, c) => s + (c.assinados || 0), 0),
@@ -278,13 +78,9 @@ function applyHierarchyTotals(collaborators: Collaborator[]): Collaborator[] {
     ganhos: list.reduce((s, c) => s + (c.ganhos || 0), 0),
     perdidos: list.reduce((s, c) => s + (c.perdidos || 0), 0),
   });
-
   for (const sup of supervisors) {
     const team = updated.filter(
-      c =>
-        c.equipeNome === sup.equipeNome &&
-        c.id !== sup.id &&
-        normalizeGroup(c.grupo) !== 'supervisor'
+      c => c.equipeNome === sup.equipeNome && c.id !== sup.id && normalizeGroup(c.grupo) !== 'supervisor'
     );
     const sums = sumMetrics(team);
     sup.emitidos = sums.emitidos;
@@ -293,7 +89,6 @@ function applyHierarchyTotals(collaborators: Collaborator[]): Collaborator[] {
     sup.ganhos = sums.ganhos;
     sup.perdidos = sums.perdidos;
   }
-
   if (supervisors.length > 0) {
     const supersSums = sumMetrics(supervisors);
     for (const coord of coordAdmins) {
@@ -304,8 +99,27 @@ function applyHierarchyTotals(collaborators: Collaborator[]): Collaborator[] {
       coord.perdidos = supersSums.perdidos;
     }
   }
-
   return updated;
+}
+
+function getDateRangeFromPeriod(period: Period, customStart?: string, customEnd?: string): { start: string; end: string } {
+  if (period === 'Custom' && customStart && customEnd) {
+    const endDate = new Date(customEnd); endDate.setDate(endDate.getDate() + 1);
+    return { start: customStart, end: endDate.toISOString().slice(0, 10) };
+  }
+  const now = new Date(); let start: Date, end: Date;
+  if (period === 'Hoje') {
+    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+  } else if (period === 'Semana') {
+    const day = now.getDay(); const diffToMonday = day === 0 ? -6 : 1 - day;
+    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
+    start = monday; end = new Date(monday); end.setDate(monday.getDate() + 7);
+  } else {
+    start = new Date(now.getFullYear(), now.getMonth(), 1);
+    end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  }
+  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
 }
 
 // ============================================================
@@ -317,7 +131,6 @@ const initialKpiData: KpiData = {
   protocolados: { value: 0, target: 0, unit: '', label: 'Protocolados' },
   taxaConversao: { value: 0, target: 0, unit: '%', label: 'Taxa de Conversão' },
 };
-
 const initialBonusData: BonusData = { active: false, label: '', description: '', threshold: 0, current: 0, bonusValue: 0 };
 const initialWeeklyPerformance: WeeklyPerformance[] = [
   { day: 'Seg', vendas: 0, meta: 0 }, { day: 'Ter', vendas: 0, meta: 0 }, { day: 'Qua', vendas: 0, meta: 0 },
@@ -326,23 +139,11 @@ const initialWeeklyPerformance: WeeklyPerformance[] = [
 const initialEquipeConfigs: EquipeConfig[] = [];
 const initialCollaborators: Collaborator[] = [];
 const initialGlobalConfig: GlobalConfig = {
-  pesoMetaAssinados: 60,
-  pesoMetaGanhos: 60,
-  pesoMetaequipeAssinados: 0,
-  pesoMetaequipeGanhos: 0,
-  valorBonus: 100,
-  metaDiaria: 3,
-  metaSemanal: 15,
-  metaMensal: 60,
-  metaLeadsDiaria: 20,
-  metaLeadsSemanal: 100,
-  metaLeadsMensal: 400,
-  pesoDiarioAssinados: 3,
-  pesoDiarioGanhos: 3,
-  pesoSemanalAssinados: 15,
-  pesoSemanalGanhos: 15,
-  pesoMensalAssinados: 60,
-  pesoMensalGanhos: 60,
+  pesoMetaAssinados: 60, pesoMetaGanhos: 60, pesoMetaequipeAssinados: 0, pesoMetaequipeGanhos: 0,
+  valorBonus: 100, metaDiaria: 3, metaSemanal: 15, metaMensal: 60,
+  metaLeadsDiaria: 20, metaLeadsSemanal: 100, metaLeadsMensal: 400,
+  pesoDiarioAssinados: 3, pesoDiarioGanhos: 3, pesoSemanalAssinados: 15, pesoSemanalGanhos: 15,
+  pesoMensalAssinados: 60, pesoMensalGanhos: 60,
 };
 const initialDailyData: DailyData[] = [];
 const initialDailyProduction: DailyProduction[] = [];
@@ -380,35 +181,11 @@ const initialStatsCards: StatsCard[] = [
 ];
 const initialNotifications: Notification[] = [];
 const initialInsightCards: InsightCard[] = [];
+const initialRawMetrics: RawMetrics = { emitidos: 0, assinados: 0, protocolados: 0, ganhos: 0, perdidos: 0 };
 
-const initialRawMetrics: RawMetrics = {
-  emitidos: 0,
-  assinados: 0,
-  protocolados: 0,
-  ganhos: 0,
-  perdidos: 0,
-};
-
-function getDateRangeFromPeriod(period: Period, customStart?: string, customEnd?: string): { start: string; end: string } {
-  if (period === 'Custom' && customStart && customEnd) {
-    const endDate = new Date(customEnd); endDate.setDate(endDate.getDate() + 1);
-    return { start: customStart, end: endDate.toISOString().slice(0, 10) };
-  }
-  const now = new Date(); let start: Date, end: Date;
-  if (period === 'Hoje') {
-    start = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    end = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  } else if (period === 'Semana') {
-    const day = now.getDay(); const diffToMonday = day === 0 ? -6 : 1 - day;
-    const monday = new Date(now.getFullYear(), now.getMonth(), now.getDate() + diffToMonday);
-    start = monday; end = new Date(monday); end.setDate(monday.getDate() + 7);
-  } else {
-    start = new Date(now.getFullYear(), now.getMonth(), 1);
-    end = new Date(now.getFullYear(), now.getMonth() + 1, 1);
-  }
-  return { start: start.toISOString().slice(0, 10), end: end.toISOString().slice(0, 10) };
-}
-
+// ============================================================
+// INTERFACE DA STORE
+// ============================================================
 interface AppStore {
   currentUser: User | null;
   kpiData: KpiData; bonusData: BonusData; weeklyPerformance: WeeklyPerformance[]; dailyProduction: DailyProduction[];
@@ -456,30 +233,48 @@ interface AppStore {
   updateCollaboratorWeights: (id: number, weights: Partial<Pick<Collaborator, 'pesoDiarioAssinados' | 'pesoDiarioGanhos' | 'pesoSemanalAssinados' | 'pesoSemanalGanhos' | 'pesoMensalAssinados' | 'pesoMensalGanhos' | 'bonusPorCiclo'>>) => void;
   recalculateHierarchyWeights: () => Promise<void>;
   getCollaboratorsWithHierarchy: () => Collaborator[];
-  
-  // TOTAIS BRUTOS
   loadRawMetrics: (params?: { equipeNome?: string; colaboradorNome?: string; colaboradorId?: number; produto?: string }) => Promise<void>;
   updateKpiFromRawMetrics: () => void;
 }
 
+// ============================================================
+// CRIAÇÃO DA STORE
+// ============================================================
 export const useAppStore = create<AppStore>()(
   persist(
     (set, get) => ({
       currentUser: null,
-      kpiData: initialKpiData, bonusData: initialBonusData, weeklyPerformance: initialWeeklyPerformance,
-      dailyProduction: initialDailyProduction, ranking: initialRanking, meta3x3: initialMeta3x3,
-      goalProgress: 0, goal3x3Progress: 0, goal3x3AssinadosProgress: 0, goal3x3GanhosProgress: 0,
-      commissions: initialCommissions, commissionSummary: initialCommissionSummary, funnelData: initialFunnelData,
-      conversionByStage: initialConversionByStage, radarData: initialRadarData, productivityData: initialProductivityData,
-      statsCards: initialStatsCards, notifications: initialNotifications, insightCards: initialInsightCards,
-      collaborators: initialCollaborators, globalConfig: initialGlobalConfig, dailyData: initialDailyData,
+      kpiData: initialKpiData,
+      bonusData: initialBonusData,
+      weeklyPerformance: initialWeeklyPerformance,
+      dailyProduction: initialDailyProduction,
+      ranking: initialRanking,
+      meta3x3: initialMeta3x3,
+      goalProgress: 0,
+      goal3x3Progress: 0,
+      goal3x3AssinadosProgress: 0,
+      goal3x3GanhosProgress: 0,
+      commissions: initialCommissions,
+      commissionSummary: initialCommissionSummary,
+      funnelData: initialFunnelData,
+      conversionByStage: initialConversionByStage,
+      radarData: initialRadarData,
+      productivityData: initialProductivityData,
+      statsCards: initialStatsCards,
+      notifications: initialNotifications,
+      insightCards: initialInsightCards,
+      collaborators: initialCollaborators,
+      globalConfig: initialGlobalConfig,
+      dailyData: initialDailyData,
       equipeConfigs: initialEquipeConfigs,
       period: 'Mês',
       customStartDate: (() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10); })(),
       customEndDate: (() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10); })(),
-      currentStartDate: '', currentEndDate: '',
+      currentStartDate: '',
+      currentEndDate: '',
       rawMetrics: initialRawMetrics,
 
+      // ========== PERÍODO ==========
       setPeriod: (period) => {
         if (period !== 'Custom') {
           const { start, end } = getDateRangeFromPeriod(period);
@@ -498,20 +293,40 @@ export const useAppStore = create<AppStore>()(
         set({ currentStartDate: start, currentEndDate: end });
       },
 
+      // ========== RESET ==========
       resetStore: () => set({
-        kpiData: initialKpiData, bonusData: initialBonusData, weeklyPerformance: initialWeeklyPerformance,
-        dailyProduction: initialDailyProduction, ranking: initialRanking, meta3x3: initialMeta3x3,
-        goalProgress: 0, goal3x3Progress: 0, goal3x3AssinadosProgress: 0, goal3x3GanhosProgress: 0,
-        commissions: initialCommissions, commissionSummary: initialCommissionSummary, funnelData: initialFunnelData,
-        conversionByStage: initialConversionByStage, radarData: initialRadarData, productivityData: initialProductivityData,
-        statsCards: initialStatsCards, notifications: initialNotifications, insightCards: initialInsightCards,
-        collaborators: initialCollaborators, globalConfig: initialGlobalConfig, dailyData: initialDailyData, equipeConfigs: initialEquipeConfigs,
+        kpiData: initialKpiData,
+        bonusData: initialBonusData,
+        weeklyPerformance: initialWeeklyPerformance,
+        dailyProduction: initialDailyProduction,
+        ranking: initialRanking,
+        meta3x3: initialMeta3x3,
+        goalProgress: 0,
+        goal3x3Progress: 0,
+        goal3x3AssinadosProgress: 0,
+        goal3x3GanhosProgress: 0,
+        commissions: initialCommissions,
+        commissionSummary: initialCommissionSummary,
+        funnelData: initialFunnelData,
+        conversionByStage: initialConversionByStage,
+        radarData: initialRadarData,
+        productivityData: initialProductivityData,
+        statsCards: initialStatsCards,
+        notifications: initialNotifications,
+        insightCards: initialInsightCards,
+        collaborators: initialCollaborators,
+        globalConfig: initialGlobalConfig,
+        dailyData: initialDailyData,
+        equipeConfigs: initialEquipeConfigs,
         period: 'Mês',
         customStartDate: (() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth(), 1).toISOString().slice(0, 10); })(),
         customEndDate: (() => { const now = new Date(); return new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().slice(0, 10); })(),
-        currentStartDate: '', currentEndDate: '',
+        currentStartDate: '',
+        currentEndDate: '',
         rawMetrics: initialRawMetrics,
       }),
+
+      // ========== SETTERS BÁSICOS ==========
       setKpiData: (data) => set({ kpiData: data }),
       setBonusData: (data) => set({ bonusData: data }),
       setWeeklyPerformance: (data) => set({ weeklyPerformance: data }),
@@ -542,8 +357,10 @@ export const useAppStore = create<AppStore>()(
       updateCollaboratorTotals: (colaboradorId) => {
         const userDailyData = get().dailyData.filter(d => d.colaboradorId === colaboradorId);
         const totals = userDailyData.reduce((acc, day) => ({
-          emitidos: acc.emitidos + day.emitidos, assinados: acc.assinados + day.assinados,
-          ganhos: acc.ganhos + day.ganhos, perdidos: acc.perdidos + day.perdidos,
+          emitidos: acc.emitidos + day.emitidos,
+          assinados: acc.assinados + day.assinados,
+          ganhos: acc.ganhos + day.ganhos,
+          perdidos: acc.perdidos + day.perdidos,
         }), { emitidos: 0, assinados: 0, ganhos: 0, perdidos: 0 });
         set((state) => ({ collaborators: state.collaborators.map(c => c.id === colaboradorId ? { ...c, ...totals } : c) }));
       },
@@ -602,12 +419,8 @@ export const useAppStore = create<AppStore>()(
         return uid ? get().collaborators.find(c => c.id === uid) : undefined;
       },
       addNotification: (notification) => set((state) => ({ notifications: [notification, ...state.notifications] })),
-      markNotificationRead: (id) => set((state) => ({
-        notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n)
-      })),
-      markAllNotificationsRead: () => set((state) => ({
-        notifications: state.notifications.map(n => ({ ...n, read: true }))
-      })),
+      markNotificationRead: (id) => set((state) => ({ notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n) })),
+      markAllNotificationsRead: () => set((state) => ({ notifications: state.notifications.map(n => ({ ...n, read: true })) })),
       getUnreadCount: () => get().notifications.filter(n => !n.read).length,
       setCommissions: (data) => set({ commissions: data }),
       setCommissionSummary: (data) => set({ commissionSummary: data }),
@@ -624,7 +437,6 @@ export const useAppStore = create<AppStore>()(
         try {
           const collabs: any[] = await fetchCollaborators();
           const unique = collabs.filter((c, i, self) => self.findIndex(t => t.id === c.id) === i);
-          
           const baseCollaborators: Collaborator[] = unique.map((c: any) => ({
             id: c.id,
             name: c.name,
@@ -699,8 +511,8 @@ export const useAppStore = create<AppStore>()(
           }
 
           set({ collaborators: baseCollaborators });
-        } catch (err) { 
-          console.error('Erro ao carregar colaboradores:', err); 
+        } catch (err) {
+          console.error('Erro ao carregar colaboradores:', err);
         }
       },
 
@@ -717,22 +529,28 @@ export const useAppStore = create<AppStore>()(
         await get().loadWeeklyPerformanceData();
       },
 
+      // ========== PRINCIPAL: LOAD METRICS FOR PERIOD ==========
       loadMetricsForPeriod: async (params = {}) => {
         try {
           const { currentStartDate, currentEndDate, collaborators } = get();
           if (!currentStartDate || !currentEndDate) { get().updateCurrentDates(); }
-          const start = get().currentStartDate; const end = get().currentEndDate;
+          const start = get().currentStartDate;
+          const end = get().currentEndDate;
           if (!start || !end) return;
           if (collaborators.length === 0) await get().loadCollaborators();
 
           const { equipeNome, colaboradorNome, colaboradorId, produto } = params;
           const apiParams = { start, end, equipe: equipeNome, colaborador: colaboradorNome, colaboradorId, produto };
           const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
-            fetchEmitidos(apiParams), fetchAssinados(apiParams), fetchProtocolados(apiParams), fetchGanhos(apiParams), fetchPerdidos(apiParams),
+            fetchEmitidos(apiParams),
+            fetchAssinados(apiParams),
+            fetchProtocolados(apiParams),
+            fetchGanhos(apiParams),
+            fetchPerdidos(apiParams),
           ]);
 
+          // --- Atualiza os colaboradores individuais ---
           const normalize = (str: string): string => (str || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
-
           const mapToNum = (arr: any[], key: string) => {
             const m = new Map<string, number>();
             arr.forEach((e: any) => {
@@ -741,14 +559,13 @@ export const useAppStore = create<AppStore>()(
             });
             return m;
           };
-
           const eMap = mapToNum(emitidos, 'colaborador');
           const aMap = mapToNum(assinados, 'colaborador');
           const pMap = mapToNum(protocolados, 'colaborador');
           const gMap = mapToNum(ganhos, 'colaborador');
           const peMap = mapToNum(perdidos, 'colaborador');
 
-          const updated = get().collaborators.map(c => ({
+          let updated = get().collaborators.map(c => ({
             ...c,
             emitidos: eMap.get(normalize(c.name)) ?? 0,
             assinados: aMap.get(normalize(c.name)) ?? 0,
@@ -757,22 +574,80 @@ export const useAppStore = create<AppStore>()(
             perdidos: peMap.get(normalize(c.name)) ?? 0,
           }));
 
+          // Aplica regras de produtos especiais
           updated.forEach(c => {
             if (c.grupo === 'Quinquenio' || c.grupo === 'Concomitante') {
               c.ganhos = 0;
             }
           });
 
+          // Aplica hierarquia (supervisores e coordenadores somam suas equipes)
           const hierarchical = applyHierarchyTotals(updated);
           set({ collaborators: hierarchical });
           get().updateKpiFromMetrics();
 
+          // --- ATUALIZA RAW METRICS (TOTAIS GERAIS) ---
+          const sumTotal = (data: any[]) => data.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+          const rawMetrics = {
+            emitidos: sumTotal(emitidos),
+            assinados: sumTotal(assinados),
+            protocolados: sumTotal(protocolados),
+            ganhos: sumTotal(ganhos),
+            perdidos: sumTotal(perdidos),
+          };
+          set({ rawMetrics });
+          console.log('✅ loadMetricsForPeriod atualizou rawMetrics:', rawMetrics);
+
+          // --- Atualiza produção diária (leads) ---
           const leadsData = await fetchLeadsRecebidos(apiParams);
           const leadsByDate = new Map<string, number>();
           leadsData.forEach((l: any) => leadsByDate.set(l.data, (leadsByDate.get(l.data) || 0) + l.total));
           const dailyProd: DailyProduction[] = Array.from(leadsByDate.entries()).map(([date, leads]) => ({ date, vendas: 0, leads }));
           if (dailyProd.length) set({ dailyProduction: dailyProd.sort((a, b) => a.date.localeCompare(b.date)) });
-        } catch (err) { console.error('Erro ao carregar métricas:', err); }
+        } catch (err) {
+          console.error('Erro ao carregar métricas:', err);
+        }
+      },
+
+      // ========== LOAD RAW METRICS (INDEPENDENTE) ==========
+      loadRawMetrics: async (params = {}) => {
+        try {
+          const { currentStartDate, currentEndDate } = get();
+          if (!currentStartDate || !currentEndDate) {
+            get().updateCurrentDates();
+          }
+          const start = get().currentStartDate;
+          const end = get().currentEndDate;
+          if (!start || !end) return;
+
+          const { equipeNome, colaboradorNome, colaboradorId, produto } = params;
+          const apiParams = { start, end, equipe: equipeNome, colaborador: colaboradorNome, colaboradorId, produto };
+          
+          console.log('📡 [loadRawMetrics] Buscando totais com params:', apiParams);
+          
+          const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
+            fetchEmitidos(apiParams),
+            fetchAssinados(apiParams),
+            fetchProtocolados(apiParams),
+            fetchGanhos(apiParams),
+            fetchPerdidos(apiParams),
+          ]);
+
+          const sumTotal = (data: any[]) => data.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+          
+          const rawMetrics = {
+            emitidos: sumTotal(emitidos),
+            assinados: sumTotal(assinados),
+            protocolados: sumTotal(protocolados),
+            ganhos: sumTotal(ganhos),
+            perdidos: sumTotal(perdidos),
+          };
+          
+          set({ rawMetrics });
+          console.log('✅ [loadRawMetrics] RawMetrics atualizados:', rawMetrics);
+        } catch (err) {
+          console.error('❌ [loadRawMetrics] Erro:', err);
+        }
       },
 
       updateKpiFromMetrics: () => {
@@ -789,6 +664,26 @@ export const useAppStore = create<AppStore>()(
             ...s.kpiData,
             comissaoMes: { ...s.kpiData.comissaoMes, value: comissao },
             vendasFechadas: { ...s.kpiData.vendasFechadas, value: totalGanhos, target: globalConfig.metaMensal || 200 },
+            protocolados: { ...s.kpiData.protocolados, value: totalProt },
+            taxaConversao: { ...s.kpiData.taxaConversao, value: taxa },
+          },
+        }));
+      },
+
+      updateKpiFromRawMetrics: () => {
+        const { rawMetrics, globalConfig } = get();
+        const totalAss = rawMetrics.assinados;
+        const totalGan = rawMetrics.ganhos;
+        const totalProt = rawMetrics.protocolados;
+        const totalEmi = rawMetrics.emitidos;
+        const taxa = totalEmi > 0 ? (totalAss / totalEmi) * 100 : 0;
+        const metaBatida = Math.floor(Math.min(totalAss / (globalConfig.pesoMetaAssinados || 3), totalGan / (globalConfig.pesoMetaGanhos || 3)));
+        const comissao = metaBatida * (globalConfig.valorBonus || 100);
+        set((s) => ({
+          kpiData: {
+            ...s.kpiData,
+            comissaoMes: { ...s.kpiData.comissaoMes, value: comissao },
+            vendasFechadas: { ...s.kpiData.vendasFechadas, value: totalGan, target: globalConfig.metaMensal || 200 },
             protocolados: { ...s.kpiData.protocolados, value: totalProt },
             taxaConversao: { ...s.kpiData.taxaConversao, value: taxa },
           },
@@ -821,9 +716,7 @@ export const useAppStore = create<AppStore>()(
 
       updateCollaboratorWeights: (id, weights) => {
         set((state) => ({
-          collaborators: state.collaborators.map(c =>
-            c.id === id ? { ...c, ...weights } : c
-          )
+          collaborators: state.collaborators.map(c => c.id === id ? { ...c, ...weights } : c)
         }));
       },
 
@@ -879,65 +772,6 @@ export const useAppStore = create<AppStore>()(
       getCollaboratorsWithHierarchy: () => {
         return applyHierarchyTotals(get().collaborators);
       },
-
-      // ========== TOTAIS BRUTOS (RAW METRICS) ==========
-      loadRawMetrics: async (params = {}) => {
-        try {
-          const { currentStartDate, currentEndDate } = get();
-          if (!currentStartDate || !currentEndDate) {
-            get().updateCurrentDates();
-          }
-          const start = get().currentStartDate;
-          const end = get().currentEndDate;
-          if (!start || !end) return;
-
-          const { equipeNome, colaboradorNome, colaboradorId, produto } = params;
-          const apiParams = { start, end, equipe: equipeNome, colaborador: colaboradorNome, colaboradorId, produto };
-          
-          const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
-            fetchEmitidos(apiParams),
-            fetchAssinados(apiParams),
-            fetchProtocolados(apiParams),
-            fetchGanhos(apiParams),
-            fetchPerdidos(apiParams),
-          ]);
-
-          const sumTotal = (data: any[]) => data.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-          
-          const rawMetrics = {
-            emitidos: sumTotal(emitidos),
-            assinados: sumTotal(assinados),
-            protocolados: sumTotal(protocolados),
-            ganhos: sumTotal(ganhos),
-            perdidos: sumTotal(perdidos),
-          };
-          
-          set({ rawMetrics });
-          console.log('✅ RawMetrics carregados (inclui desativados):', rawMetrics);
-        } catch (err) {
-          console.error('Erro ao carregar rawMetrics:', err);
-        }
-      },
-
-      updateKpiFromRawMetrics: () => {
-        const { rawMetrics, globalConfig } = get();
-        const totalAss = rawMetrics.assinados;
-        const totalGan = rawMetrics.ganhos;
-        const totalProt = rawMetrics.protocolados;
-        const totalEmi = rawMetrics.emitidos;
-        const taxa = totalEmi > 0 ? (totalAss / totalEmi) * 100 : 0;
-        const metaBatida = Math.floor(Math.min(totalAss / (globalConfig.pesoMetaAssinados || 3), totalGan / (globalConfig.pesoMetaGanhos || 3)));
-        const comissao = metaBatida * (globalConfig.valorBonus || 100);
-        set((s) => ({
-          kpiData: {
-            ...s.kpiData,
-            comissaoMes: { ...s.kpiData.comissaoMes, value: comissao },
-            vendasFechadas: { ...s.kpiData.vendasFechadas, value: totalGan, target: globalConfig.metaMensal || 200 },
-            protocolados: { ...s.kpiData.protocolados, value: totalProt },
-            taxaConversao: { ...s.kpiData.taxaConversao, value: taxa },
-          },
-        }));
-      },
     }),
     {
       name: 'madm-storage',
@@ -953,6 +787,7 @@ export const useAppStore = create<AppStore>()(
   )
 );
 
+// Inicializa as datas
 setTimeout(() => { useAppStore.getState().updateCurrentDates(); }, 0);
 
 export const formatCurrency = formatCurrencyUtil;
