@@ -1,5 +1,5 @@
 // src/App.tsx
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState } from "react";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import NotFound from "@/pages/NotFound";
@@ -25,9 +25,6 @@ import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
 import { Loader2 } from "lucide-react";
 
-// ============================================================
-// HEARTBEAT: mantém a sessão ativa
-// ============================================================
 function startHeartbeat(): NodeJS.Timeout {
   const interval = setInterval(async () => {
     try {
@@ -128,14 +125,12 @@ export default function App() {
   const {
     currentUser,
     setCurrentUser,
-    collaborators,
     loadCollaboratorsAndMetrics,
     loadRawMetrics,
     loadWeeklyPerformanceData,
   } = useAppStore();
 
   const [appLoading, setAppLoading] = useState(true);
-  const initialLoadDone = useRef(false);
 
   // Busca token CSRF
   useEffect(() => {
@@ -149,13 +144,30 @@ export default function App() {
       .catch(() => {});
   }, []);
 
-  // Restaura sessão e carrega dados iniciais (UMA ÚNICA VEZ)
+  // ============================================================
+  // INICIALIZAÇÃO PRINCIPAL: verifica sessão e carrega dados
+  // ============================================================
   useEffect(() => {
     let isMounted = true;
     let timeoutId: NodeJS.Timeout | null = null;
 
     const init = async () => {
       try {
+        // 🔥 EM DESENVOLVIMENTO: força logout para sempre ver a tela de login
+        // Remova esta seção em produção se quiser manter a sessão
+        if (import.meta.env.DEV) {
+          console.log('🧪 [App] Modo desenvolvimento: forçando logout para ver tela de login');
+          await fetch(`${API_BASE}/auth/logout`, { 
+            method: 'POST', 
+            credentials: 'include',
+            headers: { 'x-csrf-token': localStorage.getItem('csrfToken') || '' }
+          });
+          localStorage.removeItem('csrfToken');
+          setCurrentUser(null);
+          if (isMounted) setAppLoading(false);
+          return;
+        }
+
         console.log('🔐 [App] Verificando sessão...');
         const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
 
@@ -172,25 +184,19 @@ export default function App() {
           console.log('✅ [App] Sessão restaurada para:', data.user.name);
           setCurrentUser(data.user);
 
-          // Carrega dados iniciais apenas se ainda não foram carregados
-          if (!initialLoadDone.current || collaborators.length === 0) {
-            console.log('⏳ [App] Carregando dados iniciais...');
-            
-            await Promise.race([
-              Promise.all([
-                loadCollaboratorsAndMetrics(undefined, undefined, undefined, undefined),
-                loadRawMetrics({}), // objeto vazio = todos os dados sem filtros
-                loadWeeklyPerformanceData(),
-              ]),
-              new Promise((_, reject) =>
-                setTimeout(() => reject(new Error('Timeout ao carregar dados iniciais')), 15000)
-              ),
-            ]);
-            initialLoadDone.current = true;
-            console.log('✅ [App] Dados iniciais carregados com sucesso');
-          } else {
-            console.log('ℹ️ [App] Dados já carregados, pulando recarga');
-          }
+          // Carrega dados iniciais (apenas para usuários autenticados)
+          console.log('⏳ [App] Carregando dados iniciais...');
+          await Promise.race([
+            Promise.all([
+              loadCollaboratorsAndMetrics(undefined, undefined, undefined, undefined),
+              loadRawMetrics({}),
+              loadWeeklyPerformanceData(),
+            ]),
+            new Promise((_, reject) =>
+              setTimeout(() => reject(new Error('Timeout ao carregar dados iniciais')), 10000)
+            ),
+          ]);
+          console.log('✅ [App] Dados iniciais carregados com sucesso');
         } else {
           console.log('ℹ️ [App] Sessão inválida ou incompleta');
           setCurrentUser(null);
@@ -206,28 +212,33 @@ export default function App() {
 
     init();
 
-    // Timeout de segurança: força fim do loading após 20 segundos
+    // 🔥 TIMEOUT DE SEGURANÇA: força fim do loading após 12 segundos
     timeoutId = setTimeout(() => {
       if (isMounted && appLoading) {
-        console.warn('⏱️ [App] Timeout de segurança (20s): forçando fim do carregamento');
+        console.warn('⏱️ [App] Timeout de segurança (12s): forçando fim do carregamento');
         setAppLoading(false);
       }
-    }, 20000);
+    }, 12000);
 
     return () => {
       isMounted = false;
       if (timeoutId) clearTimeout(timeoutId);
     };
-  }, [loadCollaboratorsAndMetrics, loadRawMetrics, loadWeeklyPerformanceData, setCurrentUser, collaborators.length, appLoading]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []); // Executa UMA ÚNICA VEZ
 
-  // Heartbeat
+  // ============================================================
+  // HEARTBEAT (apenas se autenticado)
+  // ============================================================
   useEffect(() => {
     if (!currentUser) return;
     const interval = startHeartbeat();
     return () => clearInterval(interval);
   }, [currentUser]);
 
-  // Atualiza token CSRF após login
+  // ============================================================
+  // ATUALIZA TOKEN CSRF APÓS LOGIN
+  // ============================================================
   useEffect(() => {
     if (!currentUser) return;
     fetch(`${API_BASE}/csrf-token`, { credentials: 'include' })
@@ -240,7 +251,9 @@ export default function App() {
       .catch(() => {});
   }, [currentUser]);
 
-  // Enquanto carrega, exibe loader
+  // ============================================================
+  // RENDER
+  // ============================================================
   if (appLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
