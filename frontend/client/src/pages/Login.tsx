@@ -3,7 +3,7 @@
  * Autenticação com verificação de dois fatores (2FA) via e-mail
  */
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useLocation } from "wouter";
 import { Eye, EyeOff, Shield, Mail, Lock, RefreshCw } from "lucide-react";
 import { cn } from "@/lib/utils";
@@ -21,10 +21,14 @@ export default function Login() {
   const [error, setError] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [tempToken, setTempToken] = useState<string | null>(null);
-  const [rememberMe, setRememberMe] = useState(false); 
+  const [rememberMe, setRememberMe] = useState(false);
   const [, setLocation] = useLocation();
 
   const setCurrentUser = useAppStore((state) => state.setCurrentUser);
+
+  // Refs para evitar envios duplicados e redirecionamentos
+  const isSubmittingRef = useRef(false);
+  const redirectDone = useRef(false);
 
   // ===== Buscar token CSRF ao montar a página =====
   useEffect(() => {
@@ -45,18 +49,25 @@ export default function Login() {
   // ===== Envia credenciais =====
   const handleCredentialsSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setError("");
     setIsLoading(true);
+    redirectDone.current = false;
 
     try {
       const data = await login(email, password, rememberMe);
       if (data.requiresTwoFactor) {
         setTempToken(data.tempToken);
         setStep("2fa");
+        isSubmittingRef.current = false; // libera para reenvio de código
       } else {
         localStorage.setItem("accessToken", data.accessToken);
-        if (data.user) setCurrentUser(data.user);
-        setLocation("/");
+        if (data.user && !redirectDone.current) {
+          redirectDone.current = true;
+          setCurrentUser(data.user);
+          setLocation("/");
+        }
       }
     } catch (err: any) {
       if (err.message?.toLowerCase().includes("csrf")) {
@@ -66,31 +77,44 @@ export default function Login() {
       }
     } finally {
       setIsLoading(false);
+      if (!redirectDone.current) {
+        isSubmittingRef.current = false;
+      }
     }
   };
 
   // ===== Verifica código 2FA =====
   const handleTwoFactorSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isSubmittingRef.current) return;
+    isSubmittingRef.current = true;
     setError("");
     setIsLoading(true);
+    redirectDone.current = false;
 
     if (!tempToken) {
       setError("Sessão expirada. Faça login novamente.");
       setStep("credentials");
       setIsLoading(false);
+      isSubmittingRef.current = false;
       return;
     }
 
     try {
       const data = await verify2FA(tempToken, twoFactorCode);
       localStorage.setItem("accessToken", data.accessToken);
-      if (data.user) setCurrentUser(data.user);
-      setLocation("/");
+      if (data.user && !redirectDone.current) {
+        redirectDone.current = true;
+        setCurrentUser(data.user);
+        setLocation("/");
+      }
     } catch (err: any) {
       setError(err.message || "Código inválido. Tente novamente.");
     } finally {
       setIsLoading(false);
+      if (!redirectDone.current) {
+        isSubmittingRef.current = false;
+      }
     }
   };
 
@@ -183,7 +207,6 @@ export default function Login() {
                   </div>
                 </div>
 
-                {/* ===== CHECKBOX LEMBRAR-ME ===== */}
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -289,7 +312,7 @@ export default function Login() {
             <p className="text-[10px] text-gray-400">
               {step === "credentials"
                 ? "Sistema seguro com autenticação de dois fatores por e-mail."
-                : "O código expira em 5 minutos. Verifique sua caixa de entrada ou spam."}
+                : "O código expira em 5 minutos. Verifique sua caixa de entrada, spam ou no lixo eletrônico."}
             </p>
           </div>
         </div>
