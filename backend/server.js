@@ -12,6 +12,7 @@ import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
 import twoFactorService from './security/verif-2factory.js';
 
+// ─── Routers (verifique se os ficheiros existem) ──────────────────────
 import colaboradoresRoutes from './routes/colaboradores.js';
 import metricsRouter from './routes/metrics.js';
 import adminRoutes from './routes/admin.js';
@@ -24,7 +25,6 @@ const __dirname = path.dirname(__filename);
 
 app.set('trust proxy', 1);
 
-// ---------- CORS ----------
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -57,7 +57,7 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: 'lax',         // mesmo domínio → lax é suficiente
+    sameSite: 'lax',
   },
 }));
 
@@ -75,7 +75,7 @@ function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
   if (!tokens.verify(req.session.csrfSecret, token || '')) {
-    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página.' });
+    return res.status(403).json({ success: false, error: 'CSRF token inválido.' });
   }
   next();
 }
@@ -127,7 +127,7 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
     const userId = req.session.userId;
 
     if (!userId || !tempToken) {
-      return res.status(400).json({ success: false, error: 'Sessão inválida. Faça login novamente.' });
+      return res.status(400).json({ success: false, error: 'Sessão inválida.' });
     }
 
     const verification = twoFactorService.verifyCode(userId, code);
@@ -192,7 +192,6 @@ app.post('/api/auth/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) console.error('Erro ao destruir sessão:', err);
     res.clearCookie('connect.sid');
-    console.log('✅ Sessão destruída');
     res.json({ success: true });
   });
 });
@@ -217,15 +216,19 @@ app.get('/api/auth/me', (req, res) => {
 // ========== MIDDLEWARES DE PROTEÇÃO ==========
 app.use(csrfProtection);
 app.use((req, res, next) => {
-  console.log(`🔑 [Auth] ${req.method} ${req.path}`);
-  console.log('   SID:', req.sessionID);
-  console.log('   isAuthenticated:', req.session.isAuthenticated);
-  console.log('   Cookie presente:', !!req.headers.cookie);
+  console.log(`🔑 [Auth] ${req.method} ${req.path} | SID: ${req.sessionID} | isAuthenticated: ${req.session.isAuthenticated}`);
   if (req.session.isAuthenticated) return next();
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
 
 // ========== ROTAS PROTEGIDAS ==========
+// Logs para confirmar que os routers foram carregados
+console.log('🔌 Registando rotas protegidas...');
+console.log('   - colaboradoresRoutes:', typeof colaboradoresRoutes);
+console.log('   - metricsRouter:', typeof metricsRouter);
+console.log('   - adminRoutes:', typeof adminRoutes);
+console.log('   - userRouter:', typeof userRouter);
+
 app.use('/api', colaboradoresRoutes);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
@@ -234,7 +237,7 @@ app.use('/api/user', userRouter);
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ping', (req, res) => res.json({ pong: true }));
 
-// ========== SERVE FRONTEND ESTÁTICO (produção) ==========
+// ========== SERVE FRONTEND (produção) ==========
 if (isProduction) {
   const clientDistPath = path.join(__dirname, 'client', 'dist');
   app.use(express.static(clientDistPath));
@@ -246,7 +249,6 @@ if (isProduction) {
   });
 }
 
-// Tratamento de erro
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   if (res.headersSent) return next(err);
