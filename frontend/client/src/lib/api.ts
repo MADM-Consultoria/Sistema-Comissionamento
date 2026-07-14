@@ -6,24 +6,36 @@
 export const API_BASE = '/api';
 
 // ============================================================
-// FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS
+// FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS (CORRIGIDA)
 // ============================================================
 async function handleResponse(response: Response, defaultErrorMessage: string) {
+  // Verifica se a resposta está vazia (ex: 204 ou 403 sem corpo)
   const contentLength = response.headers.get('content-length');
   if (contentLength === '0' || response.status === 204) {
     if (response.status === 403) {
       throw new Error('Token CSRF inválido. Recarregue a página e tente novamente.');
     }
-    throw new Error(defaultErrorMessage || 'Resposta vazia do servidor.');
+    // Resposta vazia não é erro; retornamos um objeto vazio
+    return {};
   }
 
+  // Lê o corpo como texto UMA ÚNICA VEZ
+  let text;
+  try {
+    text = await response.text();
+  } catch (err) {
+    console.error('❌ Erro ao ler corpo da resposta:', err);
+    throw new Error(defaultErrorMessage || 'Erro desconhecido ao processar a resposta');
+  }
+
+  // Tenta fazer parse como JSON
   let data;
   try {
-    data = await response.json();
+    data = JSON.parse(text);
   } catch (_) {
-    const text = await response.text();
+    // Se não for JSON, usa o texto como mensagem de erro
     console.error('❌ Resposta não é JSON:', text?.substring(0, 200));
-    throw new Error(`Resposta inválida: ${text?.substring(0, 100) || 'Erro desconhecido'}`);
+    throw new Error(text?.substring(0, 100) || 'Resposta inválida do servidor');
   }
 
   if (!response.ok) {
