@@ -7,8 +7,8 @@ import session from 'express-session';
 import csrfLib from 'csrf';
 import path from 'path';
 import { fileURLToPath } from 'url';
+import db from './services/db.js';   // <-- usa o objeto db exportado (pool)
 
-import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
 import twoFactorService from './security/verif-2factory.js';
 
@@ -32,14 +32,15 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", process.env.FRONTEND_URL || 'http://localhost:3007'],
+      connectSrc: ["'self'"],
       fontSrc: ["'self'"],
     },
   },
 }));
 
+// ---------- SESSÃO ----------
 const isProduction = process.env.NODE_ENV === 'production';
-const sessionStore = new PostgreSqlSessionStore(pool);
+const sessionStore = new PostgreSqlSessionStore(db.pool);   // usa o pool diretamente
 
 app.use(session({
   store: sessionStore,
@@ -50,10 +51,11 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax',
+    sameSite: 'lax',          // mesmo domínio → lax é suficiente
   },
 }));
 
+// ---------- CSRF ----------
 const tokens = new csrfLib();
 app.use((req, res, next) => {
   if (!req.session.csrfSecret) {
@@ -78,7 +80,7 @@ app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
-    const userResult = await pool.query(
+    const userResult = await db.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [email]
     );
@@ -115,17 +117,15 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
   try {
     const { tempToken, code } = req.body;
     const userId = req.session.userId;
-    if (!userId || !tempToken) {
-      return res.status(400).json({ success: false, error: 'Sessão inválida.' });
-    }
+    if (!userId || !tempToken) return res.status(400).json({ success: false, error: 'Sessão inválida.' });
+
     const verification = twoFactorService.verifyCode(userId, code);
-    if (!verification.success) {
-      return res.status(401).json({ success: false, error: verification.error });
-    }
+    if (!verification.success) return res.status(401).json({ success: false, error: verification.error });
+
     delete req.session.tempToken;
     req.session.isAuthenticated = true;
 
-    const userResult = await pool.query(
+    const userResult = await db.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
     );
@@ -145,7 +145,8 @@ app.post('/api/auth/resend-code', async (req, res) => {
   try {
     const userId = req.session.userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
-    const userResult = await pool.query(
+
+    const userResult = await db.query(
       'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
     );
@@ -181,7 +182,7 @@ app.get('/api/auth/me', (req, res) => {
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
-  pool.query(
+  db.query(
     'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
     [req.session.userId]
   ).then(result => {
@@ -200,12 +201,12 @@ app.use((req, res, next) => {
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
 
-// ========== ROTA DE TESTE (colaboradores) ==========
+// ========== ROTAS DE DADOS (COLABORADORES, EQUIPES) ==========
 app.get('/api/collaborators', async (req, res) => {
   try {
-    const periodo = req.query.mes || '2026-07';
-    const result = await pool.query(`
-      SELECT internal_id as id, colaborador as name, e_mail as email, equipe as equipeNome, grupo, status
+    const periodo = req.query.mes || new Date().toISOString().slice(0, 7);
+    const result = await db.query(`
+      SELECT internal_id AS id, colaborador AS name, e_mail AS email, equipe AS "equipeNome", grupo, status
       FROM madm.colaboradores
       WHERE periodo = $1 AND status = 'ativo'
     `, [periodo]);
@@ -216,17 +217,35 @@ app.get('/api/collaborators', async (req, res) => {
   }
 });
 
+app.get('/api/equipes', async (req, res) => {
+  try {
+    const periodo = new Date().toISOString().slice(0, 7);
+    const result = await db.query(`
+      SELECT DISTINCT equipe AS nome, id_equipe AS id
+      FROM madm.colaboradores
+      WHERE periodo = $1 AND equipe IS NOT NULL AND equipe != ''
+    `, [periodo]);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('Erro ao buscar equipes:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+// ========== ROTAS DE MÉTRICAS (EMITIDOS, ASSINADOS, ETC.) ==========
+// Pode importar o router completo se quiser, mas para garantir, inclua as rotas diretamente:
+import metricsRouter from './routes/metrics.js';   // router completo que já tem requireAuth corrigido
+app.use('/api/metrics', metricsRouter);
+
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ping', (req, res) => res.json({ pong: true }));
 
-// ========== SERVE FRONTEND (produção) ==========
+// ========== SERVIR FRONTEND (produção) ==========
 if (isProduction) {
   const clientDistPath = path.join(__dirname, 'client', 'dist');
   app.use(express.static(clientDistPath));
-  app.use((req, res) => {
-    if (req.path.startsWith('/api')) {
-      return res.status(404).json({ error: 'API não encontrada' });
-    }
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API não encontrada' });
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
@@ -239,7 +258,7 @@ app.use((err, req, res, next) => {
 
 (async () => {
   try {
-    await pool.query('SELECT 1');
+    await db.query('SELECT 1');
     console.log('✅ Conectado ao PostgreSQL');
     app.listen(PORT, () => console.log(`🚀 Servidor na porta ${PORT}`));
   } catch (error) {
@@ -248,4 +267,4 @@ app.use((err, req, res, next) => {
   }
 })();
 
-export { app, pool };
+export { app, db };
