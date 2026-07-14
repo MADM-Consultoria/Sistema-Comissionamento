@@ -90,13 +90,15 @@ export default function DashboardLayout({ children, title, subtitle }: Dashboard
     }
   };
 
-  const displayName = currentUser?.name || "Carregando...";
+  // Usa 'nome' no lugar de 'name' e define avatar como primeira letra
+  const displayName = currentUser?.nome || "Carregando...";
   const displayRole = currentUser?.grupo || currentUser?.role || "Colaborador";
   const displayAvatar = currentUser?.avatar || displayName.charAt(0).toUpperCase();
-  const displayRank = currentUser?.rank ? `#${currentUser.rank}` : "";
+  // A propriedade 'rank' não existe em User; se no futuro for adicionada, poderá ser usada.
+  // Por enquanto, exibimos vazio.
+  const displayRank = "";
 
   const shouldShowPeriodFilter = !HIDE_PERIOD_FILTER_PATHS.includes(location);
-
   const isCustomPeriod = period === 'Custom';
   const dateInputDisabled = false;
 

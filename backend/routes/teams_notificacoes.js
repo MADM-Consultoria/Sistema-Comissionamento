@@ -1,4 +1,4 @@
-// backend/suporte/teams_notificacoes.js
+// backend/suporte/teams_noticacoes.js
 const fetch = require('node-fetch');
 
 class TeamsNotificadorSuporte {
@@ -26,6 +26,7 @@ class TeamsNotificadorSuporte {
     mapearAssuntoParaChave(assunto) {
         const mapa = {
             'Discadora': 'crm',
+            'CRM': 'crm',
             'Kommo': 'crm',
             'Dash': 'dash',
             'Reversao': 'reversao',
@@ -132,7 +133,11 @@ class TeamsNotificadorSuporte {
             const webhookUrl = this.webhooks[chave];
 
             if (!webhookUrl) {
-                throw new Error(`Webhook não configurado para o assunto "${dados.assunto}" (chave: ${chave})`);
+                // Mensagem mais descritiva
+                throw new Error(
+                    `Webhook para o assunto "${dados.assunto}" (chave: ${chave}) não configurado. ` +
+                    'Verifique a variável de ambiente correspondente no .env.'
+                );
             }
 
             // 3. Montar o Adaptive Card

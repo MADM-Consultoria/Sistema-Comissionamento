@@ -76,7 +76,6 @@ async function handleApiResponse(response: Response, defaultMessage: string) {
 // LOGIN – envia credenciais e recebe tempToken para 2FA
 // ============================================================
 export async function login(email: string, password: string, rememberMe: boolean = false) {
-  // Garante que o token CSRF exista antes de enviar
   await ensureCsrfToken();
 
   const response = await fetch(`${API_BASE}/auth/login`, {
@@ -93,7 +92,7 @@ export async function login(email: string, password: string, rememberMe: boolean
 }
 
 // ============================================================
-// VERIFICAÇÃO 2FA – valida o código e obtém token de acesso
+// VERIFICAÇÃO 2FA – valida o código e autentica a sessão
 // ============================================================
 export async function verify2FA(tempToken: string, code: string) {
   await ensureCsrfToken();
@@ -110,12 +109,17 @@ export async function verify2FA(tempToken: string, code: string) {
 
   const data = await handleApiResponse(response, 'Código inválido');
 
-  // Precarrega colaboradores após autenticação
-  try {
-    const { loadCollaborators } = useAppStore.getState();
-    await loadCollaborators();
-  } catch (error) {
-    console.warn('⚠️ Não foi possível carregar colaboradores:', error);
+  // Sessão mantida via cookie; não armazenamos accessToken
+  // Apenas atualizamos o estado global com o usuário retornado
+  if (data.user) {
+    useAppStore.getState().setCurrentUser(data.user);
+
+    // Dispara o carregamento de dados em segundo plano (não bloqueia o redirecionamento)
+    const { loadCollaboratorsAndMetrics, loadRawMetrics } = useAppStore.getState();
+    Promise.all([
+      loadCollaboratorsAndMetrics(),
+      loadRawMetrics()
+    ]).catch(err => console.error('Erro ao carregar dados:', err));
   }
 
   return data;
@@ -156,7 +160,9 @@ export async function logout() {
     // ignora
   }
 
-  localStorage.removeItem('accessToken');
+  // Limpa apenas o CSRF token e a persistência do Zustand – a sessão é destruída no backend
   localStorage.removeItem('csrfToken');
+  localStorage.removeItem('madm-storage');
   sessionStorage.clear();
+  useAppStore.getState().resetStore();
 }

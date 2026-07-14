@@ -184,5 +184,13 @@ export default defineConfig({
       strict: true,
       deny: ["**/.*"],
     },
+    // 🔁 Proxy para o backend – evita problemas de CORS e cookies cross-origin
+    proxy: {
+      "/api": {
+        target: "http://localhost:3007",
+        changeOrigin: true,
+        secure: false,
+      },
+    },
   },
 });

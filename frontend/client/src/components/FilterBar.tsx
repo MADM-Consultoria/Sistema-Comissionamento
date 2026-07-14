@@ -108,7 +108,6 @@ export default function FilterBar({
   useEffect(() => {
     let mounted = true;
     const load = async () => {
-      // Se já tem colaboradores na store, define ready imediatamente
       if (collaborators.length > 0) {
         if (mounted) {
           setIsReady(true);
@@ -128,7 +127,6 @@ export default function FilterBar({
         console.error('Erro ao carregar colaboradores:', err);
         if (mounted) {
           setColabError(err.message || "Falha ao carregar colaboradores");
-          // Mesmo em erro, define ready para não travar a UI
           setIsReady(true);
         }
       } finally {
@@ -139,7 +137,7 @@ export default function FilterBar({
     return () => { mounted = false; };
   }, [collaborators.length, setCollaborators]);
 
-  // ========== APLICA RESTRIÇÕES DE ACESSO (o mais cedo possível) ==========
+  // ========== APLICA RESTRIÇÕES DE ACESSO ==========
   useEffect(() => {
     if (!currentUser) return;
     if (hasAppliedRestrictions) return;
@@ -148,12 +146,11 @@ export default function FilterBar({
 
     if (isAssessor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
-      if (currentUser.name) setSelectedColaborador(currentUser.name);
+      if (currentUser.nome) setSelectedColaborador(currentUser.nome);  // ✅ nome em vez de name
     } else if (isSupervisor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
       setSelectedColaborador("todos");
     } else {
-      // Admin/Coordenador: mantém valores iniciais
       setSelectedEquipe(initialEquipe);
       setSelectedColaborador(initialColaborador);
     }
@@ -194,8 +191,9 @@ export default function FilterBar({
       filtered = filtered.filter((c) => normalize(c.equipeNome) === normalize(effectiveEquipe));
     }
 
+    // 🔁 Comparação pelo e‑mail, não mais por id
     if (isAssessor && currentUser) {
-      filtered = filtered.filter((c) => c.id === currentUser.id);
+      filtered = filtered.filter((c) => c.email === currentUser.e_mail);
     }
 
     if (searchTerm) {
@@ -222,7 +220,7 @@ export default function FilterBar({
     }
   }, [selectedColaborador, collaborators, isAssessor, isSupervisor, selectedEquipe, equipesDisponiveis, isReady]);
 
-  // ========== NOTIFICAR O PARENT (APENAS QUANDO READY E RESTRIÇÕES APLICADAS) ==========
+  // ========== NOTIFICAR O PARENT ==========
   const onFilterChangeRef = useRef(onFilterChange);
   useEffect(() => {
     onFilterChangeRef.current = onFilterChange;
@@ -235,7 +233,7 @@ export default function FilterBar({
     let finalColaborador = selectedColaborador;
     if (isAssessor && currentUser) {
       finalEquipe = currentUser.equipe || "todas";
-      finalColaborador = currentUser.name || "todos";
+      finalColaborador = currentUser.nome || "todos";  // ✅ nome
     } else if (isSupervisor && currentUser) {
       finalEquipe = currentUser.equipe || "todas";
       finalColaborador = selectedColaborador;

@@ -1,56 +1,33 @@
 // backend/server.js
 import 'dotenv/config';
-import session from 'express-session';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import session from 'express-session';
 import csrfLib from 'csrf';
-import { PostgresService } from './Postgree-Service.js';
 
-// Importação das rotas
-import authRouter from './routes/auth.js';
-console.log('🔍 authRouter carregado?', typeof authRouter, authRouter ? '✅' : '❌');
+import { pool } from './services/db.js';
+import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
+import twoFactorService from './security/verif-2factory.js';
 
+// Importe seus routers existentes
 import colaboradoresRoutes from './routes/colaboradores.js';
 import metricsRouter from './routes/metrics.js';
 import adminRoutes from './routes/admin.js';
-import { securityMiddleware } from './security/index.js';
+import userRouter from './routes/user.js';
 
 const app = express();
 const PORT = process.env.PORT || 3007;
 
-// ---------- TRUST PROXY (obrigatório para Render) ----------
+// ---------- Configurações básicas ----------
 app.set('trust proxy', 1);
 
-// ---------- CORS ----------
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
-app.use(cors({
-  origin: allowedOrigins,
-  credentials: true,
-}));
+app.use(cors({ origin: allowedOrigins, credentials: true }));
 
-// ---------- SESSÃO (sem maxAge fixo – será definido na rota de login) ----------
-const isProduction = process.env.NODE_ENV === 'production';
-app.use(session({
-  secret: process.env.SESSION_SECRET || 'fallback-secret',
-  resave: false,
-  saveUninitialized: false,
-  cookie: {
-    secure: isProduction,
-    httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax',
-    // maxAge será definido dinamicamente em /login
-  },
-}));
-
-// ---------- BODY PARSERS ----------
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
-// ---------- SANITIZAÇÃO ----------
-app.use(securityMiddleware);
-
-// ---------- HELMET ----------
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -64,6 +41,23 @@ app.use(helmet({
   },
 }));
 
+// ---------- Sessão com PostgreSQL ----------
+const isProduction = process.env.NODE_ENV === 'production';
+const sessionStore = new PostgreSqlSessionStore(pool);
+
+app.use(session({
+  store: sessionStore,
+  secret: process.env.SESSION_SECRET || 'chave-secreta-sessao',
+  resave: false,
+  saveUninitialized: false,
+  rolling: true,
+  cookie: {
+    secure: isProduction,
+    httpOnly: true,
+    sameSite: isProduction ? 'none' : 'lax',
+  },
+}));
+
 // ---------- CSRF ----------
 const tokens = new csrfLib();
 app.use((req, res, next) => {
@@ -74,145 +68,174 @@ app.use((req, res, next) => {
   next();
 });
 
-// ---------- ROTAS PÚBLICAS (sem CSRF) ----------
-app.use('/api/auth', authRouter);
-app.get('/api/csrf-token', (req, res) => {
-  const token = req.csrfToken();
-  console.log('🔑 Token CSRF gerado:', token?.substring(0, 20) + '...');
-  res.json({ csrfToken: token });
-});
-
-// ---------- MIDDLEWARE DE VERIFICAÇÃO CSRF (com retorno JSON) ----------
 function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
   if (!tokens.verify(req.session.csrfSecret, token || '')) {
-    console.warn('❌ CSRF inválido');
-    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página e tente novamente.' });
+    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página.' });
   }
   next();
 }
-app.use(csrfProtection);
 
-// ---------- ROTAS PROTEGIDAS ----------
-app.use('/api', colaboradoresRoutes);
-app.use('/api/metrics', metricsRouter);
-app.use('/api/admin', adminRoutes);
+// ========== ROTAS PÚBLICAS (sem autenticação) ==========
+app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }));
 
-// ========== ROTA PARA RECALCULAR HIERARQUIA ==========
-app.post('/api/commission/recalculate-hierarchy', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   try {
-    const db = dbService;
-    const now = new Date();
-    const dataReferencia = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-01`;
-    const periodoRef = dataReferencia.substring(0, 7);
-    console.log(`📅 Recalculando hierarquia para o mês atual: ${dataReferencia}`);
+    const { email, password, rememberMe } = req.body;
 
-    const colaboradoresResult = await db.query(`
-      SELECT e_mail, colaborador as name, equipe, grupo
-      FROM madm.colaboradores
-      WHERE periodo = $1
-    `, [periodoRef]);
-    const colaboradores = colaboradoresResult.rows;
-    if (colaboradores.length === 0) {
-      return res.status(400).json({ success: false, error: 'Nenhum colaborador encontrado para o período atual' });
+    const userResult = await pool.query(
+      'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
+      [email]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(401).json({ success: false, error: 'Credenciais inválidas' });
+    }
+    const user = userResult.rows[0];
+
+    const twoFactorResult = await twoFactorService.sendCode(user.email, user.nome);
+    if (!twoFactorResult.success) {
+      return res.status(500).json({ success: false, error: twoFactorResult.error || 'Erro ao enviar código' });
     }
 
-    const metricsResult = await db.query(`
-      SELECT email,
-             peso_meta_assinados_diario, peso_meta_ganho_diario,
-             peso_meta_assinados_semanal, peso_meta_ganho_semanal,
-             peso_meta_assinados_mensal, peso_meta_ganho_mensal
-      FROM app_comissionamento.metricas_assessores
-      WHERE data_metrica = $1
-    `, [dataReferencia]);
-    const metricsMap = new Map();
-    metricsResult.rows.forEach(m => metricsMap.set(m.email, m));
+    req.session.cookie.maxAge = rememberMe ? 30 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+    req.session.userId = user.e_mail;
+    req.session.tempToken = twoFactorResult.tempToken;
+    req.session.ip = req.ip;
+    req.session.userAgent = req.headers['user-agent'];
 
-    const sumWeights = (listaEmails) => {
-      let somaDiarioAss = 0, somaDiarioGan = 0;
-      let somaSemanalAss = 0, somaSemanalGan = 0;
-      let somaMensalAss = 0, somaMensalGan = 0;
-      for (const email of listaEmails) {
-        const m = metricsMap.get(email);
-        if (m) {
-          somaDiarioAss += Number(m.peso_meta_assinados_diario) || 0;
-          somaDiarioGan += Number(m.peso_meta_ganho_diario) || 0;
-          somaSemanalAss += Number(m.peso_meta_assinados_semanal) || 0;
-          somaSemanalGan += Number(m.peso_meta_ganho_semanal) || 0;
-          somaMensalAss += Number(m.peso_meta_assinados_mensal) || 0;
-          somaMensalGan += Number(m.peso_meta_ganho_mensal) || 0;
-        }
+    req.session.save((err) => {
+      if (err) {
+        console.error('Erro ao salvar sessão:', err);
+        return res.status(500).json({ success: false, error: 'Erro interno' });
       }
-      return { somaDiarioAss, somaDiarioGan, somaSemanalAss, somaSemanalGan, somaMensalAss, somaMensalGan };
-    };
-
-    const updateMetrics = async (email, soma, tipo) => {
-      const { somaDiarioAss, somaDiarioGan, somaSemanalAss, somaSemanalGan, somaMensalAss, somaMensalGan } = soma;
-      const existing = await db.query(
-        `SELECT id_assessor FROM app_comissionamento.metricas_assessores WHERE email = $1 AND data_metrica = $2`,
-        [email, dataReferencia]
-      );
-      if (existing.rows.length > 0) {
-        await db.query(`
-          UPDATE app_comissionamento.metricas_assessores
-          SET peso_meta_assinados_diario = $1,
-              peso_meta_ganho_diario = $2,
-              peso_meta_assinados_semanal = $3,
-              peso_meta_ganho_semanal = $4,
-              peso_meta_assinados_mensal = $5,
-              peso_meta_ganho_mensal = $6
-          WHERE email = $7 AND data_metrica = $8
-        `, [somaDiarioAss, somaDiarioGan, somaSemanalAss, somaSemanalGan, somaMensalAss, somaMensalGan, email, dataReferencia]);
-      }
-    };
-
-    const supervisores = colaboradores.filter(c => c.grupo?.toLowerCase() === 'supervisor');
-    const coordAdmins = colaboradores.filter(c => c.grupo?.toLowerCase() === 'coordenador');
-    for (const sup of supervisores) {
-      const membrosEquipe = colaboradores.filter(c => c.equipe === sup.equipe && c.e_mail !== sup.e_mail && c.grupo?.toLowerCase() !== 'supervisor');
-      const emailsEquipe = membrosEquipe.map(c => c.e_mail);
-      const soma = sumWeights(emailsEquipe);
-      await updateMetrics(sup.e_mail, soma, 'Supervisor');
-    }
-    if (supervisores.length > 0) {
-      const emailsSupervisores = supervisores.map(s => s.e_mail);
-      const somaSupervisores = sumWeights(emailsSupervisores);
-      for (const coord of coordAdmins) {
-        await updateMetrics(coord.e_mail, somaSupervisores, 'Coordenador');
-      }
-    }
-    res.json({ success: true, message: `Hierarquia recalculada com sucesso para ${dataReferencia}` });
+      return res.json({
+        success: true,
+        requiresTwoFactor: true,
+        tempToken: twoFactorResult.tempToken,
+      });
+    });
   } catch (error) {
-    console.error('❌ Erro ao recalcular hierarquia:', error);
-    res.status(500).json({ success: false, error: error.message });
+    console.error('❌ Erro no login:', error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
   }
 });
 
-// ---------- HEALTH CHECK E PING ----------
-app.get('/api/health', (req, res) => {
-  res.json({ status: 'ok', timestamp: new Date().toISOString() });
-});
-app.get('/api/ping', (req, res) => {
-  res.json({ pong: true, time: new Date().toISOString() });
+app.post('/api/auth/verify-2fa', async (req, res) => {
+  try {
+    const { tempToken, code } = req.body;
+    const userId = req.session.userId;
+
+    if (!userId || !tempToken) {
+      return res.status(400).json({ success: false, error: 'Sessão inválida. Faça login novamente.' });
+    }
+
+    const verification = twoFactorService.verifyCode(userId, code);
+    if (!verification.success) {
+      return res.status(401).json({ success: false, error: verification.error });
+    }
+
+    delete req.session.tempToken;
+    req.session.isAuthenticated = true;
+
+    const userResult = await pool.query(
+      'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
+      [userId]
+    );
+    const user = userResult.rows[0];
+
+    req.session.save((err) => {
+      if (err) return res.status(500).json({ success: false, error: 'Erro ao salvar sessão' });
+      return res.json({ success: true, user });
+    });
+  } catch (error) {
+    console.error('❌ Erro na verificação 2FA:', error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
 });
 
-// ---------- FALLBACK 404 ----------
-app.use((req, res) => {
-  res.status(404).json({ error: 'Rota não encontrada' });
+app.post('/api/auth/resend-code', async (req, res) => {
+  try {
+    const userId = req.session.userId;
+    if (!userId) {
+      return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
+    }
+
+    const userResult = await pool.query(
+      'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
+      [userId]
+    );
+    if (userResult.rows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
+    }
+    const user = userResult.rows[0];
+
+    const result = await twoFactorService.resendCode(userId, user.email);
+    if (result.success) {
+      req.session.tempToken = result.tempToken;
+      req.session.save(() => res.json({ success: true }));
+    } else {
+      res.status(500).json({ success: false, error: result.error });
+    }
+  } catch (error) {
+    console.error('❌ Erro ao reenviar código:', error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  }
 });
 
-// ---------- MIDDLEWARE DE ERRO ----------
+app.post('/api/auth/logout', (req, res) => {
+  req.session.destroy((err) => {
+    if (err) return res.status(500).json({ success: false, error: 'Erro ao encerrar sessão' });
+    res.clearCookie('connect.sid');
+    res.json({ success: true });
+  });
+});
+
+// Rota que o frontend usa para restaurar a sessão
+app.get('/api/auth/me', (req, res) => {
+  if (!req.session.isAuthenticated || !req.session.userId) {
+    return res.status(401).json({ success: false, error: 'Não autenticado' });
+  }
+  pool.query(
+    'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
+    [req.session.userId]
+  ).then(result => {
+    if (result.rows.length === 0) return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
+    res.json({ success: true, user: result.rows[0] });
+  }).catch(error => {
+    console.error('Erro ao obter usuário:', error);
+    res.status(500).json({ success: false, error: 'Erro interno' });
+  });
+});
+
+// ========== MIDDLEWARES DE PROTEÇÃO ==========
+app.use(csrfProtection);
+app.use((req, res, next) => {
+  if (req.session.isAuthenticated) return next();
+  return res.status(401).json({ success: false, error: 'Não autenticado' });
+});
+
+// ========== ROTAS PROTEGIDAS ==========
+app.use('/api', colaboradoresRoutes);
+app.use('/api/metrics', metricsRouter);
+app.use('/api/admin', adminRoutes);
+app.use('/api/user', userRouter);
+
+// Health e ping
+app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
+app.get('/api/ping', (req, res) => res.json({ pong: true, time: new Date().toISOString() }));
+
+// ---------- Tratamento de erro ----------
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
+  if (res.headersSent) return next(err);
   res.status(500).json({ success: false, error: 'Erro interno do servidor' });
 });
 
-// ---------- INICIALIZAÇÃO ----------
-const dbService = new PostgresService();
-async function startServer() {
+// ---------- Inicialização ----------
+(async () => {
   try {
-    await dbService.connect();
+    await pool.query('SELECT 1');
     console.log('✅ Conectado ao PostgreSQL');
     app.listen(PORT, () => {
       console.log(`🚀 Servidor rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
@@ -221,7 +244,6 @@ async function startServer() {
     console.error('❌ Erro ao conectar ao banco:', error);
     process.exit(1);
   }
-}
-startServer();
+})();
 
-export { app, dbService };
+export { app, pool };
