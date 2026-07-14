@@ -1,9 +1,10 @@
 // src/lib/api.ts
 
 // ============================================================
-// BASE URL – EXPORTADA PARA USO EM OUTROS ARQUIVOS
+// BASE URL – agora usa o proxy em desenvolvimento (/api)
+// Em produção, defina VITE_API_URL com a URL completa do backend.
 // ============================================================
-export const API_BASE = import.meta.env.VITE_API_URL || 'http://localhost:3007/api';
+export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 // ============================================================
 // FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS
@@ -139,7 +140,7 @@ export interface MetricParams {
 }
 
 function buildMetricUrl(base: string, params: MetricParams): string {
-  const url = new URL(base);
+  const url = new URL(base, window.location.origin); // base relativa precisa de base absoluta
   url.searchParams.append('start', params.start);
   url.searchParams.append('end', params.end);
   if (params.colaborador) url.searchParams.append('colaborador', params.colaborador);
@@ -199,7 +200,7 @@ export async function fetchLeadsRecebidos(params: MetricParams): Promise<{ data:
 // PERFORMANCE SEMANAL
 // ============================================================
 export async function fetchWeeklyPerformance(params: { start: string; end: string }): Promise<{ semana: string; vendas: number; meta: number }[]> {
-  const url = new URL(`${API_BASE}/metrics/weekly`);
+  const url = new URL(`${API_BASE}/metrics/weekly`, window.location.origin);
   url.searchParams.append('start', params.start);
   url.searchParams.append('end', params.end);
   const res = await fetch(url.toString(), { credentials: 'include' });
