@@ -18,8 +18,7 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     let timeoutId: NodeJS.Timeout | null = null;
 
     const loadData = async () => {
-      // Se não há usuário, não carrega dados e redireciona
-      if (!currentUser || !currentUser.id) {
+      if (!currentUser || !currentUser.e_mail) {
         console.log('🔒 [ProtectedRoute] Usuário não autenticado');
         if (isMounted) {
           setLoading(false);
@@ -28,9 +27,8 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         return;
       }
 
-      // Se já temos colaboradores, não recarrega
       if (collaborators.length > 0) {
-        console.log('✅ [ProtectedRoute] Dados já carregados (', collaborators.length, ' colaboradores)');
+        console.log('✅ [ProtectedRoute] Dados já carregados');
         if (isMounted) {
           setLoading(false);
           setError(null);
@@ -44,11 +42,11 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
         await Promise.race([
           Promise.all([loadCollaboratorsAndMetrics(), loadRawMetrics()]),
           new Promise((_, reject) =>
-            setTimeout(() => reject(new Error("Tempo limite excedido ao carregar dados iniciais")), 10000)
+            setTimeout(() => reject(new Error("Timeout ao carregar dados")), 10000)
           ),
         ]);
         if (isMounted) {
-          console.log('✅ [ProtectedRoute] Dados carregados com sucesso');
+          console.log('✅ [ProtectedRoute] Dados carregados');
           setLoading(false);
         }
       } catch (err) {
@@ -62,12 +60,11 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
 
     loadData();
 
-    // Timeout de segurança (12s)
     timeoutId = setTimeout(() => {
       if (isMounted && loading) {
-        console.warn("⏱️ [ProtectedRoute] Timeout de segurança (12s) forçando saída do loading");
+        console.warn("⏱️ Timeout de segurança");
         setLoading(false);
-        setError("O carregamento demorou mais que o esperado. Tente recarregar a página.");
+        setError("Carregamento demorado. Tente recarregar.");
       }
     }, 12000);
 
@@ -77,20 +74,13 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     };
   }, [currentUser, collaborators, loadCollaboratorsAndMetrics, loadRawMetrics]);
 
-  // Se não houver usuário, redireciona para login
-  if (!currentUser || !currentUser.id) {
-    console.log("🔒 [ProtectedRoute] Redirecionando para /login");
+  if (!currentUser || !currentUser.e_mail) {
     return <Redirect to="/login" />;
   }
 
-  // Se estiver carregando, exibe loader
   if (loading) {
     return (
-      <div
-        className="flex flex-col items-center justify-center min-h-screen"
-        role="status"
-        aria-live="polite"
-      >
+      <div className="flex flex-col items-center justify-center min-h-screen" role="status">
         <Loader2 className="w-8 h-8 animate-spin text-[#09175b]" />
         <span className="mt-2 text-sm text-gray-500">Carregando dados...</span>
         <p className="mt-1 text-xs text-gray-400">Isso pode levar alguns segundos</p>
@@ -98,11 +88,9 @@ export default function ProtectedRoute({ children }: ProtectedRouteProps) {
     );
   }
 
-  // Se houve erro, exibe no console mas renderiza a página (não bloqueia)
   if (error) {
-    console.warn("⚠️ [ProtectedRoute] Erro no carregamento, mas renderizando página:", error);
+    console.warn("⚠️ Erro no carregamento:", error);
   }
 
-  // Renderiza a página protegida
   return <>{children}</>;
 }

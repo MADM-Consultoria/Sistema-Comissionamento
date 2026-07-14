@@ -1,34 +1,41 @@
 // backend/routes/user.js
 import express from 'express';
 import db from '../services/db.js';
-import { requireAuth } from '../middleware/auth.js';
 
 const router = express.Router();
+
+// Middleware de autenticação (mesmo padrão do server.js)
+function requireAuth(req, res, next) {
+  if (!req.session.isAuthenticated || !req.session.userId) {
+    return res.status(401).json({ success: false, error: 'Não autenticado' });
+  }
+  next();
+}
+
+// Obtém o colaborador a partir do e-mail da sessão
+async function getColaboradorFromSession(req) {
+  const email = req.session.userId;   // userId é o e_mail
+  if (!email) return null;
+
+  const result = await db.query(
+    `SELECT internal_id, colaborador, equipe, grupo, status
+     FROM madm.colaboradores
+     WHERE e_mail = $1
+     LIMIT 1`,
+    [email]
+  );
+  return result.rows[0] || null;
+}
 
 router.use(requireAuth);
 
 // ============================================================
-// AUXILIAR: obtém o nome do colaborador a partir do ID da sessão
-// ============================================================
-async function getColaboradorNomeFromSession(sessionUser) {
-  const userId = sessionUser?.id;
-  if (!userId) return null;
-  const result = await db.query(
-    `SELECT colaborador FROM madm.colaboradores WHERE internal_id = $1 LIMIT 1`,
-    [userId]
-  );
-  return result.rows[0]?.colaborador || null;
-}
-
-// ============================================================
 // GET /api/user/data
-// Retorna métricas do usuário (emitidos, assinados, ganhos, perdidos)
-// Parâmetros: start (YYYY-MM-DD), end (YYYY-MM-DD) ou date (YYYY-MM-DD)
 // ============================================================
 router.get('/data', async (req, res) => {
   try {
-    const colaboradorNome = await getColaboradorNomeFromSession(req.session.user);
-    if (!colaboradorNome) {
+    const user = await getColaboradorFromSession(req);
+    if (!user) {
       return res.status(404).json({ error: 'Colaborador não encontrado' });
     }
 
@@ -43,7 +50,6 @@ router.get('/data', async (req, res) => {
       return res.status(400).json({ error: 'Informe start/end ou date' });
     }
 
-    // Buscar métricas diretamente das tabelas principais
     const query = `
       SELECT
         (SELECT COUNT(*) FROM madm.emitidos_e_assinados 
@@ -57,7 +63,7 @@ router.get('/data', async (req, res) => {
          WHERE lead_usuario_responsavel = $1 AND data_ganho BETWEEN $2 AND $3 
            AND etapa_lead = 'Venda perdida') as perdidos
     `;
-    const result = await db.query(query, [colaboradorNome, startDate, endDate]);
+    const result = await db.query(query, [user.colaborador, startDate, endDate]);
     const data = result.rows[0] || { emitidos: 0, assinados: 0, ganhos: 0, perdidos: 0 };
     res.json(data);
   } catch (err) {
@@ -67,12 +73,10 @@ router.get('/data', async (req, res) => {
 });
 
 // ============================================================
-// GET /api/user/meta
-// Retorna as metas globais do sistema (não salva configurações pessoais)
+// GET /api/user/meta (metas globais)
 // ============================================================
 router.get('/meta', async (req, res) => {
   try {
-    // Buscar configurações globais da tabela existente (se houver)
     let pesoAssinados = 3;
     let pesoGanhos = 3;
     let bonusBase = 150;
@@ -85,9 +89,8 @@ router.get('/meta', async (req, res) => {
         pesoGanhos = globalResult.rows[0].pesometaganhos;
         bonusBase = globalResult.rows[0].valorbonus;
       }
-    } catch (err) {
-      // Tabela pode não existir; mantém valores padrão
-    }
+    } catch (err) { /* mantém defaults */ }
+
     const meta = {
       meta_quantidade: pesoAssinados,
       meta_percentual: pesoGanhos,
@@ -103,15 +106,15 @@ router.get('/meta', async (req, res) => {
 });
 
 // ============================================================
-// GET /api/user/team
-// Retorna os membros da equipe do usuário logado (tabela madm.colaboradores)
+// GET /api/user/team – membros da equipe do utilizador logado
 // ============================================================
 router.get('/team', async (req, res) => {
   try {
-    const equipeNome = req.session.user.equipe;
-    if (!equipeNome) {
+    const user = await getColaboradorFromSession(req);
+    if (!user || !user.equipe) {
       return res.status(400).json({ error: 'Usuário não pertence a nenhuma equipe' });
     }
+
     const result = await db.query(
       `SELECT 
          internal_id as id,
@@ -124,7 +127,7 @@ router.get('/team', async (req, res) => {
          CURRENT_DATE as ultima_atualizacao
        FROM madm.colaboradores
        WHERE equipe = $1 AND status = 'ativo'`,
-      [equipeNome]
+      [user.equipe]
     );
     res.json(result.rows);
   } catch (err) {
@@ -134,13 +137,12 @@ router.get('/team', async (req, res) => {
 });
 
 // ============================================================
-// GET /api/user/config
-// Retorna as configurações pessoais do assessor logado
+// GET /api/user/config – configurações do assessor logado
 // ============================================================
 router.get('/config', async (req, res) => {
   try {
-    const userId = req.session.user?.internal_id;
-    if (!userId) {
+    const user = await getColaboradorFromSession(req);
+    if (!user) {
       return res.status(401).json({ success: false, error: 'Usuário não autenticado' });
     }
 
@@ -156,13 +158,12 @@ router.get('/config', async (req, res) => {
          peso_meta_ganho_mensal
        FROM app_comissionamento.metricas_assessores
        WHERE id_assessor::integer = $1`,
-      [userId]
+      [user.internal_id]
     );
 
     if (result.rows.length > 0) {
       return res.json({ success: true, ...result.rows[0] });
     } else {
-      // Retorna defaults caso não haja registro ainda
       return res.json({
         success: true,
         comissao_colaborador: 0,
@@ -182,13 +183,12 @@ router.get('/config', async (req, res) => {
 });
 
 // ============================================================
-// POST /api/user/config
-// Persiste as configurações de comissão e metas no assessor logado
+// POST /api/user/config – salva configurações
 // ============================================================
 router.post('/config', async (req, res) => {
   try {
-    const userId = req.session.user?.internal_id;
-    if (!userId) {
+    const user = await getColaboradorFromSession(req);
+    if (!user) {
       return res.status(401).json({ success: false, error: 'Usuário não autenticado' });
     }
 
@@ -203,7 +203,6 @@ router.post('/config', async (req, res) => {
       peso_meta_ganho_mensal,
     } = req.body;
 
-    // Validação simples: todos devem ser números válidos e >= 0
     const campos = [
       comissao_colaborador,
       comissao_bonus,
@@ -222,7 +221,6 @@ router.post('/config', async (req, res) => {
       });
     }
 
-    // Atualiza na tabela, assumindo que id_assessor é texto que representa um inteiro
     const query = `
       UPDATE app_comissionamento.metricas_assessores
       SET
@@ -248,7 +246,7 @@ router.post('/config', async (req, res) => {
       peso_meta_ganho_semanal,
       peso_meta_assinados_mensal,
       peso_meta_ganho_mensal,
-      userId,
+      user.internal_id,
     ];
 
     const result = await db.query(query, values);
@@ -265,8 +263,7 @@ router.post('/config', async (req, res) => {
 });
 
 // ============================================================
-// POST /api/user/extract
-// Não armazena métricas diárias (sem tabela). Apenas retorna sucesso.
+// POST /api/user/extract (placeholder)
 // ============================================================
 router.post('/extract', async (req, res) => {
   res.json({ success: true, message: 'Extração não armazenada (sem tabela no banco)' });

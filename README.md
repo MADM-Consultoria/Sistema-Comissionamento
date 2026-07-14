@@ -319,3 +319,8 @@ SELECT
 						  
     (SELECT COUNT(*) FROM madm.kommo_leads WHERE data_ganho BETWEEN '2026-06-01' AND current_date AND etapa_lead IN ('Venda perdida')
 	                      /*AND lead_usuario_responsavel = 'Mayara Dias Ribeiro'*/) AS perdidos;
+
+
+SELECT SUM(peso_meta_assinados_diario) AS total FROM  app_comissionamento.metricas_assessores
+   WHERE classificacao_operacional in ('Discador','Judit')
+    AND data_metrica ='2026-07-01';

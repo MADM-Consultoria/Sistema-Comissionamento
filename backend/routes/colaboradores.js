@@ -4,8 +4,9 @@ import db from '../services/db.js';
 
 const router = express.Router();
 
+// Middleware de autenticação – verifica isAuthenticated e userId
 function requireAuth(req, res, next) {
-  if (!req.session.user) {
+  if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
   next();
@@ -38,16 +39,14 @@ function normalize(str) {
 }
 
 // ============================================================
-// Nova função de correspondência: tenta várias combinações
+// Função de correspondência: tenta várias combinações
 // ============================================================
 function findMetricByEmail(email, metricsMap) {
   const clean = normalize(email);
   if (!clean) return null;
 
-  // 1. Tentativa direta
   if (metricsMap.has(clean)) return metricsMap.get(clean);
 
-  // 2. Tentativa com .br adicionado/removido
   const variants = new Set();
   variants.add(clean);
   if (clean.endsWith('.br')) {
@@ -56,23 +55,18 @@ function findMetricByEmail(email, metricsMap) {
     variants.add(clean + '.br');
   }
 
-  // 3. Tentativa sem o domínio (ex: felipe.oliveira)
   if (clean.includes('@')) {
     const localPart = clean.split('@')[0];
     variants.add(localPart);
     variants.add(localPart + '@madmbrasil.com.br');
-    // Adicionar também com .br no domínio
     if (!localPart.endsWith('.br')) {
       variants.add(localPart + '.br');
     }
   }
 
   for (const v of variants) {
-    if (metricsMap.has(v)) {
-      return metricsMap.get(v);
-    }
+    if (metricsMap.has(v)) return metricsMap.get(v);
   }
-
   return null;
 }
 
@@ -84,7 +78,6 @@ router.get('/collaborators', requireAuth, async (req, res) => {
   console.log(`📅 Buscando colaboradores para o período: ${periodo}`);
 
   try {
-    // 1. Buscar colaboradores do período
     const todosColabs = await db.query(`
       SELECT internal_id, id_crm, colaborador, e_mail, id_equipe, equipe, grupo, status, periodo
       FROM madm.colaboradores
@@ -94,13 +87,11 @@ router.get('/collaborators', requireAuth, async (req, res) => {
         AND LOWER(grupo) != 'desativado'
     `, [periodo]);
     const colabsArray = todosColabs.rows;
-    console.log(`👥 Colaboradores encontrados: ${colabsArray.length}`);
 
     if (colabsArray.length === 0) {
       return res.json({ success: true, data: [] });
     }
 
-    // 2. Buscar métricas do mesmo período
     const metricas = await db.query(`
       SELECT email, data_metrica,
              COALESCE(peso_meta_assinados_diario, 3)   AS meta_diario_assinados,
@@ -114,13 +105,11 @@ router.get('/collaborators', requireAuth, async (req, res) => {
       FROM app_comissionamento.metricas_assessores
       WHERE TO_CHAR(data_metrica::date, 'YYYY-MM') = $1
     `, [periodo]);
-    console.log(`📊 Métricas encontradas: ${metricas.rows.length}`);
 
     const metricsByEmail = new Map();
     for (const m of metricas.rows) {
       const normalized = normalize(m.email);
       metricsByEmail.set(normalized, m);
-      // Também armazenar com .br e sem .br para facilitar
       if (normalized.endsWith('.br')) {
         metricsByEmail.set(normalized.slice(0, -3), m);
       } else {
@@ -136,7 +125,6 @@ router.get('/collaborators', requireAuth, async (req, res) => {
       const emailColab = normalize(colab.e_mail);
       let metrica = findMetricByEmail(emailColab, metricsByEmail);
 
-      // Fallback: buscar pelo nome do colaborador
       if (!metrica) {
         const nomeColab = normalize(colab.colaborador);
         for (const [key, m] of metricsByEmail.entries()) {
@@ -181,12 +169,7 @@ router.get('/collaborators', requireAuth, async (req, res) => {
     res.json({ success: true, data: colaboradores });
   } catch (err) {
     console.error('❌ Erro ao buscar colaboradores:', err);
-    // Envia detalhes do erro para o frontend
-    res.status(500).json({
-      success: false,
-      error: err.message,
-      stack: process.env.NODE_ENV === 'development' ? err.stack : undefined,
-    });
+    res.status(500).json({ success: false, error: err.message });
   }
 });
 

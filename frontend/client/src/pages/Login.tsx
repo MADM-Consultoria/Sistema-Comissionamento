@@ -62,7 +62,7 @@ export default function Login() {
         setStep("2fa");
         isSubmittingRef.current = false; // libera para reenvio de código
       } else {
-        localStorage.setItem("accessToken", data.accessToken);
+        // Cenário sem 2FA (não esperado, mas mantido por segurança)
         if (data.user && !redirectDone.current) {
           redirectDone.current = true;
           setCurrentUser(data.user);
@@ -102,7 +102,7 @@ export default function Login() {
 
     try {
       const data = await verify2FA(tempToken, twoFactorCode);
-      localStorage.setItem("accessToken", data.accessToken);
+      // ✅ Não usamos mais accessToken — a sessão é mantida via cookie
       if (data.user && !redirectDone.current) {
         redirectDone.current = true;
         setCurrentUser(data.user);

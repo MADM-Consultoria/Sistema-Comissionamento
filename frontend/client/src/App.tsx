@@ -25,18 +25,6 @@ import { API_BASE } from "@/lib/api";
 import { useAppStore } from "@/lib/dataStore";
 import { Loader2 } from "lucide-react";
 
-function startHeartbeat(): NodeJS.Timeout {
-  const interval = setInterval(async () => {
-    try {
-      await fetch(`${API_BASE}/auth/ping`, {
-        credentials: 'include',
-        headers: { 'x-csrf-token': localStorage.getItem('csrfToken') || '' },
-      });
-    } catch (_) { /* ignore */ }
-  }, 5 * 60 * 1000);
-  return interval;
-}
-
 function Router() {
   return (
     <Switch>
@@ -127,7 +115,7 @@ export default function App() {
     setCurrentUser,
     loadCollaboratorsAndMetrics,
     loadRawMetrics,
-    loadWeeklyPerformanceData,
+    collaborators,
   } = useAppStore();
 
   const [appLoading, setAppLoading] = useState(true);
@@ -145,94 +133,78 @@ export default function App() {
   }, []);
 
   // ============================================================
-  // INICIALIZAÇÃO PRINCIPAL: verifica sessão e carrega dados
+  // INICIALIZAÇÃO: verifica sessão via /auth/me
   // ============================================================
   useEffect(() => {
     let isMounted = true;
-    let timeoutId: NodeJS.Timeout | null = null;
-
     const init = async () => {
       try {
-        // 🔥 EM DESENVOLVIMENTO: força logout para sempre ver a tela de login
-        // Remova esta seção em produção se quiser manter a sessão
-        if (import.meta.env.DEV) {
-          console.log('🧪 [App] Modo desenvolvimento: forçando logout para ver tela de login');
-          await fetch(`${API_BASE}/auth/logout`, { 
-            method: 'POST', 
-            credentials: 'include',
-            headers: { 'x-csrf-token': localStorage.getItem('csrfToken') || '' }
-          });
-          localStorage.removeItem('csrfToken');
-          setCurrentUser(null);
-          if (isMounted) setAppLoading(false);
-          return;
-        }
-
-        console.log('🔐 [App] Verificando sessão...');
+        console.log('🔐 Verificando sessão via /auth/me...');
         const res = await fetch(`${API_BASE}/auth/me`, { credentials: 'include' });
 
-        if (!res.ok) {
-          console.log('ℹ️ [App] Sessão não encontrada (status:', res.status, ')');
-          if (isMounted) setAppLoading(false);
-          return;
-        }
-
-        const data = await res.json();
-        console.log('📦 [App] Resposta /auth/me:', data);
-
-        if (data.success && data.user && data.user.id) {
-          console.log('✅ [App] Sessão restaurada para:', data.user.name);
-          setCurrentUser(data.user);
-
-          // Carrega dados iniciais (apenas para usuários autenticados)
-          console.log('⏳ [App] Carregando dados iniciais...');
-          await Promise.race([
-            Promise.all([
-              loadCollaboratorsAndMetrics(undefined, undefined, undefined, undefined),
-              loadRawMetrics({}),
-              loadWeeklyPerformanceData(),
-            ]),
-            new Promise((_, reject) =>
-              setTimeout(() => reject(new Error('Timeout ao carregar dados iniciais')), 10000)
-            ),
-          ]);
-          console.log('✅ [App] Dados iniciais carregados com sucesso');
+        if (res.ok) {
+          const data = await res.json();
+          if (data.success && data.user) {
+            console.log('✅ Sessão restaurada para:', data.user.nome);
+            setCurrentUser(data.user);
+          } else {
+            console.log('ℹ️ Sessão não encontrada ou inválida');
+          }
         } else {
-          console.log('ℹ️ [App] Sessão inválida ou incompleta');
-          setCurrentUser(null);
+          console.log('ℹ️ /auth/me retornou status', res.status);
         }
-
-        if (isMounted) setAppLoading(false);
       } catch (err) {
-        console.error('❌ [App] Erro na inicialização:', err);
-        setCurrentUser(null);
+        console.error('Erro ao verificar sessão:', err);
+      } finally {
         if (isMounted) setAppLoading(false);
       }
     };
 
     init();
 
-    // 🔥 TIMEOUT DE SEGURANÇA: força fim do loading após 12 segundos
-    timeoutId = setTimeout(() => {
+    const timer = setTimeout(() => {
       if (isMounted && appLoading) {
-        console.warn('⏱️ [App] Timeout de segurança (12s): forçando fim do carregamento');
+        console.warn('⏱️ Timeout de segurança: forçando fim do carregamento');
         setAppLoading(false);
       }
-    }, 12000);
+    }, 5000);
 
     return () => {
       isMounted = false;
-      if (timeoutId) clearTimeout(timeoutId);
+      clearTimeout(timer);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []); // Executa UMA ÚNICA VEZ
+  }, []);
 
   // ============================================================
-  // HEARTBEAT (apenas se autenticado)
+  // CARREGAMENTO DE DADOS EM SEGUNDO PLANO
   // ============================================================
   useEffect(() => {
     if (!currentUser) return;
-    const interval = startHeartbeat();
+
+    if (collaborators.length === 0) {
+      console.log('⏳ [App] Disparando carregamento de dados em segundo plano...');
+      loadCollaboratorsAndMetrics().catch(err =>
+        console.error('Erro ao carregar métricas:', err)
+      );
+      loadRawMetrics().catch(err =>
+        console.error('Erro ao carregar raw metrics:', err)
+      );
+    }
+  }, [currentUser, collaborators.length, loadCollaboratorsAndMetrics, loadRawMetrics]);
+
+  // ============================================================
+  // HEARTBEAT – mantém sessão ativa a cada 5 minutos
+  // ============================================================
+  useEffect(() => {
+    if (!currentUser) return;
+    const interval = setInterval(async () => {
+      try {
+        await fetch(`${API_BASE}/auth/ping`, {
+          credentials: 'include',
+          headers: { 'x-csrf-token': localStorage.getItem('csrfToken') || '' },
+        });
+      } catch (_) { /* ignore */ }
+    }, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [currentUser]);
 

@@ -43,7 +43,19 @@ export interface Meta3x3 { assinados: number; ganhos: number; metaBatida: number
 export interface BonusData { active: boolean; label: string; description: string; threshold: number; current: number; bonusValue: number; }
 export interface WeeklyPerformance { day: string; vendas: number; meta: number; }
 export interface DailyProduction { date: string; vendas: number; leads: number; }
-export interface User { id: number; name: string; email: string; equipe: string; grupo: string; status: string; periodo: string; avatar?: string; role?: string; rank?: number; totalRanking?: number; }
+export interface User {
+  e_mail: string;
+  nome: string;
+  email: string;
+  equipe: string;
+  grupo: string;
+  status: string;
+  periodo?: string;
+  avatar?: string;
+  role?: string;
+  rank?: number;
+  totalRanking?: number;
+}
 export interface RankingItem { position: number; name: string; emitidos: number; assinados: number; ganhos: number; avatar: string; trend: 'up' | 'down' | 'same'; isCurrentUser?: boolean; }
 export interface CommissionItem { id: number; colaboradorId: number; cliente: string; produto: string; valor: number; status: 'pago' | 'pendente' | 'processando'; data: string; comissao: number; }
 export interface CommissionSummary { totalAcumulado: number; pendente: number; pago: number; processando: number; mediaVenda: number; }
@@ -212,7 +224,8 @@ interface AppStore {
   updateCollaboratorMeta: (id: number, metaAssinados: number, metaGanhos: number) => void;
   updateCollaboratorBonus: (id: number, bonusPorCiclo: number) => void;
   updateCollaboratorCycleMeta: (id: number, periodo: 'diario' | 'semanal' | 'mensal', assinados: number, ganhos: number) => void;
-  updateGlobalConfig: (config: Partial<GlobalConfig>) => void; setCurrentUser: (user: User | null) => void;
+  updateGlobalConfig: (config: Partial<GlobalConfig>) => void;
+  setCurrentUser: (user: User | null) => void;
   setEquipeConfigs: (data: EquipeConfig[]) => void; updateEquipeConfig: (equipeId: string, config: Partial<EquipeConfig>) => void;
   getEquipeConfigByNome: (nome: string) => EquipeConfig | undefined; getEquipeConfigById: (id: string) => EquipeConfig | undefined;
   getCollaboratorById: (id: number) => Collaborator | undefined;
@@ -295,6 +308,7 @@ export const useAppStore = create<AppStore>()(
 
       // ========== RESET ==========
       resetStore: () => set({
+        currentUser: null,
         kpiData: initialKpiData,
         bonusData: initialBonusData,
         weeklyPerformance: initialWeeklyPerformance,
@@ -335,7 +349,28 @@ export const useAppStore = create<AppStore>()(
       setGlobalConfig: (data) => set({ globalConfig: data }),
       setRanking: (data) => set({ ranking: data }),
       setDailyData: (data) => set({ dailyData: data }),
-      setCurrentUser: (user) => set({ currentUser: user }),
+
+      setCurrentUser: (user) => {
+        if (!user) {
+          set({ currentUser: null });
+          return;
+        }
+        const normalized: User = {
+          e_mail: user.e_mail || '',
+          nome: user.nome || '',
+          email: user.email || user.e_mail || '',
+          equipe: user.equipe || '',
+          grupo: user.grupo || '',
+          status: user.status || '',
+          periodo: user.periodo || '',
+          avatar: user.avatar,
+          role: user.role || user.grupo,
+          rank: user.rank,
+          totalRanking: user.totalRanking,
+        };
+        set({ currentUser: normalized });
+      },
+
       setEquipeConfigs: (data) => set({ equipeConfigs: data }),
       updateEquipeConfig: (equipeId, config) => set((state) => ({
         equipeConfigs: state.equipeConfigs.map(e => e.id === equipeId ? { ...e, ...config } : e)
@@ -415,8 +450,8 @@ export const useAppStore = create<AppStore>()(
       },
       getCollaboratorDailyByDate: (colaboradorId, date) => get().dailyData.find(d => d.id === `${colaboradorId}-${date}`),
       getCurrentUserData: () => {
-        const uid = get().currentUser?.id;
-        return uid ? get().collaborators.find(c => c.id === uid) : undefined;
+        const userEmail = get().currentUser?.e_mail;
+        return userEmail ? get().collaborators.find(c => c.email === userEmail) : undefined;
       },
       addNotification: (notification) => set((state) => ({ notifications: [notification, ...state.notifications] })),
       markNotificationRead: (id) => set((state) => ({ notifications: state.notifications.map(n => n.id === id ? { ...n, read: true } : n) })),
@@ -529,7 +564,6 @@ export const useAppStore = create<AppStore>()(
         await get().loadWeeklyPerformanceData();
       },
 
-      // ========== PRINCIPAL: LOAD METRICS FOR PERIOD ==========
       loadMetricsForPeriod: async (params = {}) => {
         try {
           const { currentStartDate, currentEndDate, collaborators } = get();
@@ -549,7 +583,6 @@ export const useAppStore = create<AppStore>()(
             fetchPerdidos(apiParams),
           ]);
 
-          // --- Atualiza os colaboradores individuais ---
           const normalize = (str: string): string => (str || '').trim().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
           const mapToNum = (arr: any[], key: string) => {
             const m = new Map<string, number>();
@@ -574,19 +607,16 @@ export const useAppStore = create<AppStore>()(
             perdidos: peMap.get(normalize(c.name)) ?? 0,
           }));
 
-          // Aplica regras de produtos especiais
           updated.forEach(c => {
             if (c.grupo === 'Quinquenio' || c.grupo === 'Concomitante') {
               c.ganhos = 0;
             }
           });
 
-          // Aplica hierarquia (supervisores e coordenadores somam suas equipes)
           const hierarchical = applyHierarchyTotals(updated);
           set({ collaborators: hierarchical });
           get().updateKpiFromMetrics();
 
-          // --- ATUALIZA RAW METRICS (TOTAIS GERAIS) ---
           const sumTotal = (data: any[]) => data.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
           const rawMetrics = {
             emitidos: sumTotal(emitidos),
@@ -596,9 +626,7 @@ export const useAppStore = create<AppStore>()(
             perdidos: sumTotal(perdidos),
           };
           set({ rawMetrics });
-          console.log('✅ loadMetricsForPeriod atualizou rawMetrics:', rawMetrics);
 
-          // --- Atualiza produção diária (leads) ---
           const leadsData = await fetchLeadsRecebidos(apiParams);
           const leadsByDate = new Map<string, number>();
           leadsData.forEach((l: any) => leadsByDate.set(l.data, (leadsByDate.get(l.data) || 0) + l.total));
@@ -609,7 +637,6 @@ export const useAppStore = create<AppStore>()(
         }
       },
 
-      // ========== LOAD RAW METRICS (INDEPENDENTE) ==========
       loadRawMetrics: async (params = {}) => {
         try {
           const { currentStartDate, currentEndDate } = get();
@@ -622,9 +649,7 @@ export const useAppStore = create<AppStore>()(
 
           const { equipeNome, colaboradorNome, colaboradorId, produto } = params;
           const apiParams = { start, end, equipe: equipeNome, colaborador: colaboradorNome, colaboradorId, produto };
-          
-          console.log('📡 [loadRawMetrics] Buscando totais com params:', apiParams);
-          
+
           const [emitidos, assinados, protocolados, ganhos, perdidos] = await Promise.all([
             fetchEmitidos(apiParams),
             fetchAssinados(apiParams),
@@ -634,7 +659,6 @@ export const useAppStore = create<AppStore>()(
           ]);
 
           const sumTotal = (data: any[]) => data.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-          
           const rawMetrics = {
             emitidos: sumTotal(emitidos),
             assinados: sumTotal(assinados),
@@ -642,9 +666,7 @@ export const useAppStore = create<AppStore>()(
             ganhos: sumTotal(ganhos),
             perdidos: sumTotal(perdidos),
           };
-          
           set({ rawMetrics });
-          console.log('✅ [loadRawMetrics] RawMetrics atualizados:', rawMetrics);
         } catch (err) {
           console.error('❌ [loadRawMetrics] Erro:', err);
         }
@@ -775,8 +797,8 @@ export const useAppStore = create<AppStore>()(
     }),
     {
       name: 'madm-storage',
+      // currentUser NÃO é persistido – a restauração é feita por /auth/me
       partialize: (state) => ({
-        currentUser: state.currentUser,
         equipeConfigs: state.equipeConfigs,
         globalConfig: state.globalConfig,
         period: state.period,
@@ -787,7 +809,6 @@ export const useAppStore = create<AppStore>()(
   )
 );
 
-// Inicializa as datas
 setTimeout(() => { useAppStore.getState().updateCurrentDates(); }, 0);
 
 export const formatCurrency = formatCurrencyUtil;
