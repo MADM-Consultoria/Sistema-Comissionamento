@@ -12,12 +12,6 @@ import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
 import twoFactorService from './security/verif-2factory.js';
 
-// ─── Routers (verifique se os ficheiros existem) ──────────────────────
-import colaboradoresRoutes from './routes/colaboradores.js';
-import metricsRouter from './routes/metrics.js';
-import adminRoutes from './routes/admin.js';
-import userRouter from './routes/user.js';
-
 const app = express();
 const PORT = process.env.PORT || 3007;
 const __filename = fileURLToPath(import.meta.url);
@@ -38,13 +32,12 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", process.env.FRONTEND_URL || 'http://localhost:3007'],
       fontSrc: ["'self'"],
     },
   },
 }));
 
-// ---------- SESSÃO ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
 
@@ -57,11 +50,10 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: 'lax',
+    sameSite: isProduction ? 'none' : 'lax',
   },
 }));
 
-// ---------- CSRF ----------
 const tokens = new csrfLib();
 app.use((req, res, next) => {
   if (!req.session.csrfSecret) {
@@ -86,7 +78,6 @@ app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
-
     const userResult = await pool.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [email]
@@ -112,7 +103,6 @@ app.post('/api/auth/login', async (req, res) => {
         console.error('Erro ao salvar sessão:', err);
         return res.status(500).json({ success: false, error: 'Erro interno' });
       }
-      console.log('✅ Sessão salva. SID:', req.sessionID);
       return res.json({ success: true, requiresTwoFactor: true, tempToken: twoFactorResult.tempToken });
     });
   } catch (error) {
@@ -125,16 +115,13 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
   try {
     const { tempToken, code } = req.body;
     const userId = req.session.userId;
-
     if (!userId || !tempToken) {
       return res.status(400).json({ success: false, error: 'Sessão inválida.' });
     }
-
     const verification = twoFactorService.verifyCode(userId, code);
     if (!verification.success) {
       return res.status(401).json({ success: false, error: verification.error });
     }
-
     delete req.session.tempToken;
     req.session.isAuthenticated = true;
 
@@ -145,11 +132,7 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
     const user = userResult.rows[0];
 
     req.session.save((err) => {
-      if (err) {
-        console.error('Erro ao salvar sessão pós-2FA:', err);
-        return res.status(500).json({ success: false, error: 'Erro interno' });
-      }
-      console.log('✅ 2FA verificado. Sessão autenticada. SID:', req.sessionID);
+      if (err) return res.status(500).json({ success: false, error: 'Erro ao salvar sessão' });
       return res.json({ success: true, user });
     });
   } catch (error) {
@@ -162,7 +145,6 @@ app.post('/api/auth/resend-code', async (req, res) => {
   try {
     const userId = req.session.userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
-
     const userResult = await pool.query(
       'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
@@ -184,7 +166,6 @@ app.post('/api/auth/resend-code', async (req, res) => {
 });
 
 app.post('/api/auth/logout', (req, res) => {
-  console.log('🚪 [Logout] SID:', req.sessionID);
   if (!req.session) {
     res.clearCookie('connect.sid');
     return res.json({ success: true });
@@ -197,7 +178,6 @@ app.post('/api/auth/logout', (req, res) => {
 });
 
 app.get('/api/auth/me', (req, res) => {
-  console.log('🔍 /auth/me - SID:', req.sessionID, '| isAuthenticated:', req.session.isAuthenticated);
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
@@ -216,23 +196,25 @@ app.get('/api/auth/me', (req, res) => {
 // ========== MIDDLEWARES DE PROTEÇÃO ==========
 app.use(csrfProtection);
 app.use((req, res, next) => {
-  console.log(`🔑 [Auth] ${req.method} ${req.path} | SID: ${req.sessionID} | isAuthenticated: ${req.session.isAuthenticated}`);
   if (req.session.isAuthenticated) return next();
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
 
-// ========== ROTAS PROTEGIDAS ==========
-// Logs para confirmar que os routers foram carregados
-console.log('🔌 Registando rotas protegidas...');
-console.log('   - colaboradoresRoutes:', typeof colaboradoresRoutes);
-console.log('   - metricsRouter:', typeof metricsRouter);
-console.log('   - adminRoutes:', typeof adminRoutes);
-console.log('   - userRouter:', typeof userRouter);
-
-app.use('/api', colaboradoresRoutes);
-app.use('/api/metrics', metricsRouter);
-app.use('/api/admin', adminRoutes);
-app.use('/api/user', userRouter);
+// ========== ROTA DE TESTE (colaboradores) ==========
+app.get('/api/collaborators', async (req, res) => {
+  try {
+    const periodo = req.query.mes || '2026-07';
+    const result = await pool.query(`
+      SELECT internal_id as id, colaborador as name, e_mail as email, equipe as equipeNome, grupo, status
+      FROM madm.colaboradores
+      WHERE periodo = $1 AND status = 'ativo'
+    `, [periodo]);
+    res.json({ success: true, data: result.rows });
+  } catch (err) {
+    console.error('Erro ao buscar colaboradores:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ping', (req, res) => res.json({ pong: true }));
