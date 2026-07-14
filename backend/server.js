@@ -44,6 +44,7 @@ app.use(helmet({
 // ---------- Sessão com PostgreSQL ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // ex.: ".onrender.com"
 
 app.use(session({
   store: sessionStore,
@@ -55,6 +56,7 @@ app.use(session({
     secure: isProduction,
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
+    domain: COOKIE_DOMAIN,           // permite compartilhar entre subdomínios
   },
 }));
 
@@ -183,17 +185,15 @@ app.post('/api/auth/resend-code', async (req, res) => {
   }
 });
 
-// Logout com logs de diagnóstico
+// Logout robusto – nunca retorna 500
 app.post('/api/auth/logout', (req, res) => {
-  console.log('🚪 [Logout] Requisição recebida. SID:', req.sessionID);
-  console.log('🔍 [Logout] Sessão atual:', JSON.stringify(req.session).substring(0, 200));
-
+  console.log('🚪 [Logout] SID:', req.sessionID);
+  if (!req.session) {
+    res.clearCookie('connect.sid');
+    return res.json({ success: true });
+  }
   req.session.destroy((err) => {
-    if (err) {
-      console.error('❌ [Logout] Erro ao destruir sessão:', err);
-      return res.status(500).json({ success: false, error: 'Erro ao encerrar sessão' });
-    }
-    console.log('✅ [Logout] Sessão destruída com sucesso');
+    if (err) console.error('Erro ao destruir sessão:', err);
     res.clearCookie('connect.sid');
     res.json({ success: true });
   });
