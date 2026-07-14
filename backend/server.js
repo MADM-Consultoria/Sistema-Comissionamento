@@ -10,7 +10,6 @@ import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
 import twoFactorService from './security/verif-2factory.js';
 
-// Importe seus routers existentes
 import colaboradoresRoutes from './routes/colaboradores.js';
 import metricsRouter from './routes/metrics.js';
 import adminRoutes from './routes/admin.js';
@@ -19,9 +18,9 @@ import userRouter from './routes/user.js';
 const app = express();
 const PORT = process.env.PORT || 3007;
 
-// ---------- Configurações básicas ----------
 app.set('trust proxy', 1);
 
+// A origem do frontend DEVE ser incluída aqui
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -41,10 +40,10 @@ app.use(helmet({
   },
 }));
 
-// ---------- Sessão com PostgreSQL ----------
+// ---------- Sessão ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined; // ex.: ".onrender.com"
+const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;   // ex.: ".onrender.com"
 
 app.use(session({
   store: sessionStore,
@@ -56,7 +55,7 @@ app.use(session({
     secure: isProduction,
     httpOnly: true,
     sameSite: isProduction ? 'none' : 'lax',
-    domain: COOKIE_DOMAIN,           // permite compartilhar entre subdomínios
+    domain: COOKIE_DOMAIN,            // compartilha o cookie entre subdomínios
   },
 }));
 
@@ -79,7 +78,7 @@ function csrfProtection(req, res, next) {
   next();
 }
 
-// ========== ROTAS PÚBLICAS (sem autenticação) ==========
+// ========== ROTAS PÚBLICAS ==========
 app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }));
 
 app.post('/api/auth/login', async (req, res) => {
@@ -111,11 +110,7 @@ app.post('/api/auth/login', async (req, res) => {
         console.error('Erro ao salvar sessão:', err);
         return res.status(500).json({ success: false, error: 'Erro interno' });
       }
-      return res.json({
-        success: true,
-        requiresTwoFactor: true,
-        tempToken: twoFactorResult.tempToken,
-      });
+      return res.json({ success: true, requiresTwoFactor: true, tempToken: twoFactorResult.tempToken });
     });
   } catch (error) {
     console.error('❌ Erro no login:', error);
@@ -159,17 +154,13 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
 app.post('/api/auth/resend-code', async (req, res) => {
   try {
     const userId = req.session.userId;
-    if (!userId) {
-      return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
-    }
+    if (!userId) return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
 
     const userResult = await pool.query(
       'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
     );
-    if (userResult.rows.length === 0) {
-      return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
-    }
+    if (userResult.rows.length === 0) return res.status(404).json({ success: false, error: 'Usuário não encontrado' });
     const user = userResult.rows[0];
 
     const result = await twoFactorService.resendCode(userId, user.email);
@@ -185,7 +176,7 @@ app.post('/api/auth/resend-code', async (req, res) => {
   }
 });
 
-// Logout robusto – nunca retorna 500
+// Logout robusto
 app.post('/api/auth/logout', (req, res) => {
   console.log('🚪 [Logout] SID:', req.sessionID);
   if (!req.session) {
@@ -199,7 +190,7 @@ app.post('/api/auth/logout', (req, res) => {
   });
 });
 
-// Rota que o frontend usa para restaurar a sessão
+// Restauração de sessão
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
@@ -230,18 +221,15 @@ app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRouter);
 
-// Health e ping
 app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
 app.get('/api/ping', (req, res) => res.json({ pong: true, time: new Date().toISOString() }));
 
-// ---------- Tratamento de erro ----------
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   if (res.headersSent) return next(err);
   res.status(500).json({ success: false, error: 'Erro interno do servidor' });
 });
 
-// ---------- Inicialização ----------
 (async () => {
   try {
     await pool.query('SELECT 1');
