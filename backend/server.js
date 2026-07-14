@@ -24,6 +24,7 @@ const __dirname = path.dirname(__filename);
 
 app.set('trust proxy', 1);
 
+// ---------- CORS ----------
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -43,7 +44,7 @@ app.use(helmet({
   },
 }));
 
-// ---------- Sessão ----------
+// ---------- SESSÃO ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
 
@@ -56,7 +57,7 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: isProduction ? 'lax' : 'lax',
+    sameSite: 'lax',         // mesmo domínio → lax é suficiente
   },
 }));
 
@@ -111,6 +112,7 @@ app.post('/api/auth/login', async (req, res) => {
         console.error('Erro ao salvar sessão:', err);
         return res.status(500).json({ success: false, error: 'Erro interno' });
       }
+      console.log('✅ Sessão salva. SID:', req.sessionID);
       return res.json({ success: true, requiresTwoFactor: true, tempToken: twoFactorResult.tempToken });
     });
   } catch (error) {
@@ -143,7 +145,11 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
     const user = userResult.rows[0];
 
     req.session.save((err) => {
-      if (err) return res.status(500).json({ success: false, error: 'Erro ao salvar sessão' });
+      if (err) {
+        console.error('Erro ao salvar sessão pós-2FA:', err);
+        return res.status(500).json({ success: false, error: 'Erro interno' });
+      }
+      console.log('✅ 2FA verificado. Sessão autenticada. SID:', req.sessionID);
       return res.json({ success: true, user });
     });
   } catch (error) {
@@ -186,11 +192,13 @@ app.post('/api/auth/logout', (req, res) => {
   req.session.destroy((err) => {
     if (err) console.error('Erro ao destruir sessão:', err);
     res.clearCookie('connect.sid');
+    console.log('✅ Sessão destruída');
     res.json({ success: true });
   });
 });
 
 app.get('/api/auth/me', (req, res) => {
+  console.log('🔍 /auth/me - SID:', req.sessionID, '| isAuthenticated:', req.session.isAuthenticated);
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
@@ -209,6 +217,10 @@ app.get('/api/auth/me', (req, res) => {
 // ========== MIDDLEWARES DE PROTEÇÃO ==========
 app.use(csrfProtection);
 app.use((req, res, next) => {
+  console.log(`🔑 [Auth] ${req.method} ${req.path}`);
+  console.log('   SID:', req.sessionID);
+  console.log('   isAuthenticated:', req.session.isAuthenticated);
+  console.log('   Cookie presente:', !!req.headers.cookie);
   if (req.session.isAuthenticated) return next();
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
@@ -226,9 +238,7 @@ app.get('/api/ping', (req, res) => res.json({ pong: true }));
 if (isProduction) {
   const clientDistPath = path.join(__dirname, 'client', 'dist');
   app.use(express.static(clientDistPath));
-
-  // ✅ Middleware de fallback que não usa path-to-regexp – evita o erro '*'
-  app.use((req, res, next) => {
+  app.use((req, res) => {
     if (req.path.startsWith('/api')) {
       return res.status(404).json({ error: 'API não encontrada' });
     }
