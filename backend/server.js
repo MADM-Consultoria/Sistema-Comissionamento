@@ -43,6 +43,7 @@ app.use(helmet({
   },
 }));
 
+// ---------- Sessão ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
 
@@ -55,8 +56,7 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: isProduction ? 'lax' : 'lax',   // 'lax' é suficiente na mesma origem
-    // domain não é necessário
+    sameSite: isProduction ? 'lax' : 'lax',
   },
 }));
 
@@ -226,12 +226,17 @@ app.get('/api/ping', (req, res) => res.json({ pong: true }));
 if (isProduction) {
   const clientDistPath = path.join(__dirname, 'client', 'dist');
   app.use(express.static(clientDistPath));
-  app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API não encontrada' });
+
+  // ✅ Corrigido: '/*' substitui '*' para evitar o PathError
+  app.get('/*', (req, res) => {
+    if (req.path.startsWith('/api')) {
+      return res.status(404).json({ error: 'API não encontrada' });
+    }
     res.sendFile(path.join(clientDistPath, 'index.html'));
   });
 }
 
+// Tratamento de erro
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   if (res.headersSent) return next(err);
