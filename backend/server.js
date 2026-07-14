@@ -219,6 +219,7 @@ app.get('/api/auth/me', (req, res) => {
 // ========== MIDDLEWARES DE PROTEÇÃO ==========
 app.use(csrfProtection);
 app.use((req, res, next) => {
+  console.log(`🔑 [Auth] ${req.method} ${req.path} - SID: ${req.sessionID} | isAuthenticated: ${req.session.isAuthenticated}`);
   if (req.session.isAuthenticated) return next();
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
