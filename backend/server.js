@@ -5,6 +5,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
 import csrfLib from 'csrf';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
@@ -17,10 +19,11 @@ import userRouter from './routes/user.js';
 
 const app = express();
 const PORT = process.env.PORT || 3007;
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 app.set('trust proxy', 1);
 
-// A origem do frontend DEVE ser incluída aqui
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
 app.use(cors({ origin: allowedOrigins, credentials: true }));
 
@@ -34,16 +37,14 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'", process.env.FRONTEND_URL || 'http://localhost:3007'],
+      connectSrc: ["'self'"],
       fontSrc: ["'self'"],
     },
   },
 }));
 
-// ---------- Sessão ----------
 const isProduction = process.env.NODE_ENV === 'production';
 const sessionStore = new PostgreSqlSessionStore(pool);
-const COOKIE_DOMAIN = process.env.COOKIE_DOMAIN || undefined;   // ex.: ".onrender.com"
 
 app.use(session({
   store: sessionStore,
@@ -54,8 +55,8 @@ app.use(session({
   cookie: {
     secure: isProduction,
     httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax',
-    domain: COOKIE_DOMAIN,            // compartilha o cookie entre subdomínios
+    sameSite: isProduction ? 'lax' : 'lax',   // 'lax' é suficiente na mesma origem
+    // domain não é necessário
   },
 }));
 
@@ -176,7 +177,6 @@ app.post('/api/auth/resend-code', async (req, res) => {
   }
 });
 
-// Logout robusto
 app.post('/api/auth/logout', (req, res) => {
   console.log('🚪 [Logout] SID:', req.sessionID);
   if (!req.session) {
@@ -190,7 +190,6 @@ app.post('/api/auth/logout', (req, res) => {
   });
 });
 
-// Restauração de sessão
 app.get('/api/auth/me', (req, res) => {
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
@@ -210,7 +209,6 @@ app.get('/api/auth/me', (req, res) => {
 // ========== MIDDLEWARES DE PROTEÇÃO ==========
 app.use(csrfProtection);
 app.use((req, res, next) => {
-  console.log(`🔑 [Auth] ${req.method} ${req.path} - SID: ${req.sessionID} | isAuthenticated: ${req.session.isAuthenticated}`);
   if (req.session.isAuthenticated) return next();
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
@@ -221,22 +219,30 @@ app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRouter);
 
-app.get('/api/health', (req, res) => res.json({ status: 'ok', timestamp: new Date().toISOString() }));
-app.get('/api/ping', (req, res) => res.json({ pong: true, time: new Date().toISOString() }));
+app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
+app.get('/api/ping', (req, res) => res.json({ pong: true }));
+
+// ========== SERVE FRONTEND ESTÁTICO (produção) ==========
+if (isProduction) {
+  const clientDistPath = path.join(__dirname, 'client', 'dist');
+  app.use(express.static(clientDistPath));
+  app.get('*', (req, res) => {
+    if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API não encontrada' });
+    res.sendFile(path.join(clientDistPath, 'index.html'));
+  });
+}
 
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   if (res.headersSent) return next(err);
-  res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  res.status(500).json({ error: 'Erro interno' });
 });
 
 (async () => {
   try {
     await pool.query('SELECT 1');
     console.log('✅ Conectado ao PostgreSQL');
-    app.listen(PORT, () => {
-      console.log(`🚀 Servidor rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
-    });
+    app.listen(PORT, () => console.log(`🚀 Servidor na porta ${PORT}`));
   } catch (error) {
     console.error('❌ Erro ao conectar ao banco:', error);
     process.exit(1);
