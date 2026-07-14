@@ -14,6 +14,7 @@ export class PostgreSqlSessionStore extends session.Store {
   }
 
   get(sid, callback) {
+    console.log(`🔍 [SessionStore] get chamado para sid: ${sid}`);
     const query = `
       SELECT dados_sessao, expira_em, status_sessao
       FROM app_comissionamento.sessoes_app
@@ -22,36 +23,44 @@ export class PostgreSqlSessionStore extends session.Store {
         AND expira_em > NOW()
     `;
     this.pool.query(query, [sid], (err, result) => {
-      if (err) return callback(err);
-      if (result.rows.length === 0) return callback(null, null);
+      if (err) {
+        console.error('❌ [SessionStore] Erro ao buscar sessão:', err);
+        return callback(err);
+      }
+      if (result.rows.length === 0) {
+        console.log('ℹ️ [SessionStore] Nenhuma sessão ativa encontrada para sid:', sid);
+        return callback(null, null);
+      }
       const row = result.rows[0];
       try {
-        const session = typeof row.dados_sessao === 'string'
+        const sessionData = typeof row.dados_sessao === 'string'
           ? JSON.parse(row.dados_sessao)
           : row.dados_sessao;
-        callback(null, session);
+        console.log('✅ [SessionStore] Sessão recuperada com sucesso');
+        callback(null, sessionData);
       } catch (e) {
+        console.error('❌ [SessionStore] Erro ao fazer parse da sessão:', e);
         callback(e);
       }
     });
   }
 
-  set(sid, session, callback) {
+  set(sid, sessionData, callback) {
+    console.log(`💾 [SessionStore] set chamado para sid: ${sid}`);
     const now = new Date();
     let expiraEm;
-    if (session.cookie?.expires) {
-      expiraEm = new Date(session.cookie.expires);
-    } else if (session.cookie?.maxAge) {
-      expiraEm = new Date(Date.now() + session.cookie.maxAge);
+    if (sessionData.cookie?.expires) {
+      expiraEm = new Date(sessionData.cookie.expires);
+    } else if (sessionData.cookie?.maxAge) {
+      expiraEm = new Date(Date.now() + sessionData.cookie.maxAge);
     } else {
-      expiraEm = new Date(Date.now() + 24 * 60 * 60 * 1000);
+      expiraEm = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24h padrão
     }
 
-    const dadosSessao = JSON.stringify(session);
-    // Sempre usa o UUID falso – a identificação real fica no JSON
+    const dadosSessao = JSON.stringify(sessionData);
     const usuarioId = DUMMY_USER_UUID;
-    const ip = session.ip || null;
-    const userAgent = session.userAgent || null;
+    const ip = sessionData.ip || null;
+    const userAgent = sessionData.userAgent || null;
 
     const query = `
       INSERT INTO app_comissionamento.sessoes_app
@@ -68,26 +77,48 @@ export class PostgreSqlSessionStore extends session.Store {
         status_sessao = 'ATIVA'
     `;
     const values = [sid, usuarioId, dadosSessao, ip, userAgent, now, now, expiraEm];
-    this.pool.query(query, values, callback);
+
+    this.pool.query(query, values, (err) => {
+      if (err) {
+        console.error('❌ [SessionStore] Erro ao salvar sessão:', err);
+        return callback(err);
+      }
+      console.log('✅ [SessionStore] Sessão salva/atualizada com sucesso');
+      callback(null);
+    });
   }
 
   destroy(sid, callback) {
+    console.log(`🗑️ [SessionStore] destroy chamado para sid: ${sid}`);
     const query = `
       UPDATE app_comissionamento.sessoes_app
       SET status_sessao = 'LOGOUT',
           encerrada_em = NOW(),
           motivo_encerramento = 'logout'
       WHERE sid = $1
+      RETURNING sid, status_sessao, encerrada_em, motivo_encerramento
     `;
-    this.pool.query(query, [sid], (err) => callback(err));
+    this.pool.query(query, [sid], (err, result) => {
+      if (err) {
+        console.error('❌ [SessionStore] Erro ao destruir sessão:', err);
+        return callback(err);
+      }
+      if (result.rows.length === 0) {
+        console.warn('⚠️ [SessionStore] Nenhuma sessão encontrada para destruir com sid:', sid);
+      } else {
+        console.log('✅ [SessionStore] Sessão marcada como LOGOUT:', result.rows[0]);
+      }
+      callback(null);
+    });
   }
 
-  touch(sid, session, callback) {
+  touch(sid, sessionData, callback) {
+    console.log(`🔄 [SessionStore] touch chamado para sid: ${sid}`);
     let expiraEm;
-    if (session.cookie?.expires) {
-      expiraEm = new Date(session.cookie.expires);
-    } else if (session.cookie?.maxAge) {
-      expiraEm = new Date(Date.now() + session.cookie.maxAge);
+    if (sessionData.cookie?.expires) {
+      expiraEm = new Date(sessionData.cookie.expires);
+    } else if (sessionData.cookie?.maxAge) {
+      expiraEm = new Date(Date.now() + sessionData.cookie.maxAge);
     } else {
       expiraEm = new Date(Date.now() + 24 * 60 * 60 * 1000);
     }
@@ -98,6 +129,13 @@ export class PostgreSqlSessionStore extends session.Store {
           status_sessao = 'ATIVA'
       WHERE sid = $1
     `;
-    this.pool.query(query, [sid, expiraEm], callback);
+    this.pool.query(query, [sid, expiraEm], (err) => {
+      if (err) {
+        console.error('❌ [SessionStore] Erro ao atualizar atividade:', err);
+        return callback(err);
+      }
+      console.log('✅ [SessionStore] Atividade renovada');
+      callback(null);
+    });
   }
 }
