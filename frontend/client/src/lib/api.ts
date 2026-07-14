@@ -1,16 +1,14 @@
 // src/lib/api.ts
 
 // ============================================================
-// BASE URL – agora usa o proxy em desenvolvimento (/api)
-// Em produção, defina VITE_API_URL com a URL completa do backend.
+// BASE URL – agora usa a mesma origem (proxy em dev, mesma origem em prod)
 // ============================================================
-export const API_BASE = import.meta.env.VITE_API_URL || '/api';
+export const API_BASE = '/api';
 
 // ============================================================
 // FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS
 // ============================================================
 async function handleResponse(response: Response, defaultErrorMessage: string) {
-  // Verifica se a resposta está vazia (ex: 204 ou 403 sem corpo)
   const contentLength = response.headers.get('content-length');
   if (contentLength === '0' || response.status === 204) {
     if (response.status === 403) {
@@ -140,7 +138,7 @@ export interface MetricParams {
 }
 
 function buildMetricUrl(base: string, params: MetricParams): string {
-  const url = new URL(base, window.location.origin); // base relativa precisa de base absoluta
+  const url = new URL(base, window.location.origin);
   url.searchParams.append('start', params.start);
   url.searchParams.append('end', params.end);
   if (params.colaborador) url.searchParams.append('colaborador', params.colaborador);
