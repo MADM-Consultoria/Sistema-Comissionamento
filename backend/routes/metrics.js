@@ -4,8 +4,9 @@ import db from '../services/db.js';
 
 const router = express.Router();
 
+// ✅ Middleware de autenticação corrigido
 function requireAuth(req, res, next) {
-  if (!req.session?.user && process.env.NODE_ENV !== 'development') {
+  if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
   next();
@@ -271,7 +272,7 @@ router.get('/protocolados', requireAuth, async (req, res) => {
   }
 });
 
-// ==================== GANHOS (AJUSTADO CONFORME PROMPT) ====================
+// ==================== GANHOS ====================
 router.get('/ganhos', requireAuth, async (req, res) => {
   try {
     let { start, end, equipe, produto, granularity } = req.query;
@@ -285,7 +286,6 @@ router.get('/ganhos', requireAuth, async (req, res) => {
       WHERE periodo = '${periodo}'
     )`;
 
-    // FILTROS EXATOS DO PROMPT
     const funis = ['AUDITORIA DE GANHO', 'JURIDICO AUDITORIA DE GANHO', 'NOVO - AUDITORIA DE GANHO', 'PRO'];
     const etapas = [
       'Venda ganha', 'PROTOCOLADO', 'AG PROTOCOLO', 'ANALISE DE PRONTUÁRIO',
@@ -363,7 +363,7 @@ router.get('/ganhos', requireAuth, async (req, res) => {
   }
 });
 
-// ==================== PERDIDOS (AJUSTADO CONFORME PROMPT) ====================
+// ==================== PERDIDOS ====================
 router.get('/perdidos', requireAuth, async (req, res) => {
   try {
     let { start, end, equipe, produto, granularity } = req.query;
@@ -377,7 +377,6 @@ router.get('/perdidos', requireAuth, async (req, res) => {
       WHERE periodo = '${periodo}'
     )`;
 
-    // FILTROS EXATOS DO PROMPT
     const funis = ['AUDITORIA DE GANHO', 'JURIDICO AUDITORIA DE GANHO', 'NOVO - AUDITORIA DE GANHO', 'PRO'];
 
     let query = `
