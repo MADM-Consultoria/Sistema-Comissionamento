@@ -183,9 +183,17 @@ app.post('/api/auth/resend-code', async (req, res) => {
   }
 });
 
+// Logout com logs de diagnóstico
 app.post('/api/auth/logout', (req, res) => {
+  console.log('🚪 [Logout] Requisição recebida. SID:', req.sessionID);
+  console.log('🔍 [Logout] Sessão atual:', JSON.stringify(req.session).substring(0, 200));
+
   req.session.destroy((err) => {
-    if (err) return res.status(500).json({ success: false, error: 'Erro ao encerrar sessão' });
+    if (err) {
+      console.error('❌ [Logout] Erro ao destruir sessão:', err);
+      return res.status(500).json({ success: false, error: 'Erro ao encerrar sessão' });
+    }
+    console.log('✅ [Logout] Sessão destruída com sucesso');
     res.clearCookie('connect.sid');
     res.json({ success: true });
   });
