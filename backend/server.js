@@ -227,8 +227,8 @@ if (isProduction) {
   const clientDistPath = path.join(__dirname, 'client', 'dist');
   app.use(express.static(clientDistPath));
 
-  // ✅ Corrigido: '/*' substitui '*' para evitar o PathError
-  app.get('/*', (req, res) => {
+  // ✅ Middleware de fallback que não usa path-to-regexp – evita o erro '*'
+  app.use((req, res, next) => {
     if (req.path.startsWith('/api')) {
       return res.status(404).json({ error: 'API não encontrada' });
     }
