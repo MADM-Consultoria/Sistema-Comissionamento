@@ -88,6 +88,14 @@ function csrfProtection(req, res, next) {
 // ========== ROTAS PÚBLICAS (sem autenticação) ==========
 app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }));
 
+// Heartbeat – mantém a sessão ativa (usado pelo frontend)
+app.get('/api/auth/ping', (req, res) => {
+  if (!req.session.isAuthenticated) {
+    return res.status(401).json({ success: false, error: 'Não autenticado' });
+  }
+  res.json({ pong: true, time: new Date().toISOString() });
+});
+
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
