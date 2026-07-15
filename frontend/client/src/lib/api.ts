@@ -1,9 +1,9 @@
 // src/lib/api.ts
 
 // ============================================================
-// BASE URL – agora usa a mesma origem (proxy em dev, mesma origem em prod)
+// BASE URL – usa VITE_API_URL em produção, /api em dev (proxy)
 // ============================================================
-export const API_BASE = '/api';
+export const API_BASE = import.meta.env.VITE_API_URL || '/api';
 
 // ============================================================
 // FUNÇÃO AUXILIAR PARA TRATAR RESPOSTAS (CORRIGIDA)

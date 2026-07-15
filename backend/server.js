@@ -5,26 +5,37 @@ import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
 import csrfLib from 'csrf';
-import path from 'path';
-import { fileURLToPath } from 'url';
-import db from './services/db.js';   // <-- usa o objeto db exportado (pool)
 
+import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
 import twoFactorService from './security/verif-2factory.js';
 
+// Importa os routers protegidos
+import colaboradoresRoutes from './routes/colaboradores.js';
+import metricsRouter from './routes/metrics.js';
+import adminRoutes from './routes/admin.js';
+import userRouter from './routes/user.js';
+
 const app = express();
 const PORT = process.env.PORT || 3007;
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
 
+// ---------- Trust proxy (obrigatório no Render) ----------
 app.set('trust proxy', 1);
 
+// ---------- CORS ----------
+const isProduction = process.env.NODE_ENV === 'production';
 const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://localhost:3008'];
-app.use(cors({ origin: allowedOrigins, credentials: true }));
 
+app.use(cors({
+  origin: allowedOrigins,
+  credentials: true,                // permite envio de cookies cross‑origin
+}));
+
+// ---------- Body parsers ----------
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: true, limit: '1mb' }));
 
+// ---------- Helmet ----------
 app.use(helmet({
   contentSecurityPolicy: {
     directives: {
@@ -32,15 +43,14 @@ app.use(helmet({
       scriptSrc: ["'self'", "'unsafe-inline'"],
       styleSrc: ["'self'", "'unsafe-inline'"],
       imgSrc: ["'self'", "data:", "blob:"],
-      connectSrc: ["'self'"],
+      connectSrc: ["'self'", process.env.FRONTEND_URL || 'http://localhost:3007'],
       fontSrc: ["'self'"],
     },
   },
 }));
 
-// ---------- SESSÃO ----------
-const isProduction = process.env.NODE_ENV === 'production';
-const sessionStore = new PostgreSqlSessionStore(db.pool);   // usa o pool diretamente
+// ---------- Sessão ----------
+const sessionStore = new PostgreSqlSessionStore(pool);
 
 app.use(session({
   store: sessionStore,
@@ -49,9 +59,10 @@ app.use(session({
   saveUninitialized: false,
   rolling: true,
   cookie: {
-    secure: isProduction,
+    secure: isProduction,            // true no Render (HTTPS)
     httpOnly: true,
-    sameSite: 'lax',          // mesmo domínio → lax é suficiente
+    sameSite: isProduction ? 'none' : 'lax',   // 'none' permite cross‑origin
+    // NÃO definir 'domain' – o cookie fica associado ao domínio do backend
   },
 }));
 
@@ -69,18 +80,19 @@ function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
   if (!tokens.verify(req.session.csrfSecret, token || '')) {
-    return res.status(403).json({ success: false, error: 'CSRF token inválido.' });
+    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página.' });
   }
   next();
 }
 
-// ========== ROTAS PÚBLICAS ==========
+// ========== ROTAS PÚBLICAS (sem autenticação) ==========
 app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }));
 
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
-    const userResult = await db.query(
+
+    const userResult = await pool.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [email]
     );
@@ -117,15 +129,20 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
   try {
     const { tempToken, code } = req.body;
     const userId = req.session.userId;
-    if (!userId || !tempToken) return res.status(400).json({ success: false, error: 'Sessão inválida.' });
+
+    if (!userId || !tempToken) {
+      return res.status(400).json({ success: false, error: 'Sessão inválida. Faça login novamente.' });
+    }
 
     const verification = twoFactorService.verifyCode(userId, code);
-    if (!verification.success) return res.status(401).json({ success: false, error: verification.error });
+    if (!verification.success) {
+      return res.status(401).json({ success: false, error: verification.error });
+    }
 
     delete req.session.tempToken;
     req.session.isAuthenticated = true;
 
-    const userResult = await db.query(
+    const userResult = await pool.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
     );
@@ -146,7 +163,7 @@ app.post('/api/auth/resend-code', async (req, res) => {
     const userId = req.session.userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
 
-    const userResult = await db.query(
+    const userResult = await pool.query(
       'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
     );
@@ -182,7 +199,7 @@ app.get('/api/auth/me', (req, res) => {
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
   }
-  db.query(
+  pool.query(
     'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
     [req.session.userId]
   ).then(result => {
@@ -201,70 +218,34 @@ app.use((req, res, next) => {
   return res.status(401).json({ success: false, error: 'Não autenticado' });
 });
 
-// ========== ROTAS DE DADOS (COLABORADORES, EQUIPES) ==========
-app.get('/api/collaborators', async (req, res) => {
-  try {
-    const periodo = req.query.mes || new Date().toISOString().slice(0, 7);
-    const result = await db.query(`
-      SELECT internal_id AS id, colaborador AS name, e_mail AS email, equipe AS "equipeNome", grupo, status
-      FROM madm.colaboradores
-      WHERE periodo = $1 AND status = 'ativo'
-    `, [periodo]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    console.error('Erro ao buscar colaboradores:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-app.get('/api/equipes', async (req, res) => {
-  try {
-    const periodo = new Date().toISOString().slice(0, 7);
-    const result = await db.query(`
-      SELECT DISTINCT equipe AS nome, id_equipe AS id
-      FROM madm.colaboradores
-      WHERE periodo = $1 AND equipe IS NOT NULL AND equipe != ''
-    `, [periodo]);
-    res.json({ success: true, data: result.rows });
-  } catch (err) {
-    console.error('Erro ao buscar equipes:', err);
-    res.status(500).json({ success: false, error: err.message });
-  }
-});
-
-// ========== ROTAS DE MÉTRICAS (EMITIDOS, ASSINADOS, ETC.) ==========
-// Pode importar o router completo se quiser, mas para garantir, inclua as rotas diretamente:
-import metricsRouter from './routes/metrics.js';   // router completo que já tem requireAuth corrigido
+// ========== ROTAS PROTEGIDAS ==========
+app.use('/api', colaboradoresRoutes);
 app.use('/api/metrics', metricsRouter);
+app.use('/api/admin', adminRoutes);
+app.use('/api/user', userRouter);
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ping', (req, res) => res.json({ pong: true }));
 
-// ========== SERVIR FRONTEND (produção) ==========
-if (isProduction) {
-  const clientDistPath = path.join(__dirname, 'client', 'dist');
-  app.use(express.static(clientDistPath));
-  app.get('*', (req, res) => {
-    if (req.path.startsWith('/api')) return res.status(404).json({ error: 'API não encontrada' });
-    res.sendFile(path.join(clientDistPath, 'index.html'));
-  });
-}
-
+// Tratamento de erro
 app.use((err, req, res, next) => {
   console.error('❌ Erro:', err);
   if (res.headersSent) return next(err);
   res.status(500).json({ error: 'Erro interno' });
 });
 
+// ---------- Inicialização ----------
 (async () => {
   try {
-    await db.query('SELECT 1');
+    await pool.query('SELECT 1');
     console.log('✅ Conectado ao PostgreSQL');
-    app.listen(PORT, () => console.log(`🚀 Servidor na porta ${PORT}`));
+    app.listen(PORT, () => {
+      console.log(`🚀 Servidor rodando na porta ${PORT} (${process.env.NODE_ENV || 'development'})`);
+    });
   } catch (error) {
     console.error('❌ Erro ao conectar ao banco:', error);
     process.exit(1);
   }
 })();
 
-export { app, db };
+export { app, pool };
