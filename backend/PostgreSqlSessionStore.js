@@ -4,7 +4,7 @@ import session from 'express-session';
 const DUMMY_USER_UUID = '00000000-0000-0000-0000-000000000000';
 
 export class PostgreSqlSessionStore extends session.Store {
-  constructor(pool, cleanupIntervalMs = 30 * 60 * 1000) {   // 30 min padrão
+  constructor(pool, cleanupIntervalMs = 30 * 60 * 1000) {
     super();
     this.pool = pool;
     this.cleanupIntervalMs = cleanupIntervalMs;
@@ -14,7 +14,6 @@ export class PostgreSqlSessionStore extends session.Store {
       this.emit('disconnect');
     });
 
-    // Inicia a limpeza automática de sessões expiradas
     this._startCleanupTimer();
   }
 
@@ -23,23 +22,18 @@ export class PostgreSqlSessionStore extends session.Store {
       this.cleanupExpiredSessions();
     }, this.cleanupIntervalMs);
 
-    // Executa uma limpeza inicial após 5 segundos
     setTimeout(() => {
       this.cleanupExpiredSessions();
     }, 5000);
   }
 
-  /**
-   * Marca como EXPIRADA todas as sessões cujo expira_em já passou e ainda estão ATIVA.
-   * Preenche encerrada_em, motivo_encerramento e duracao_segundos.
-   */
   async cleanupExpiredSessions() {
     try {
       const query = `
         UPDATE app_comissionamento.sessoes_app
         SET status_sessao = 'EXPIRADA',
             encerrada_em = NOW(),
-            motivo_encerramento = 'expiração',
+            motivo_encerramento = 'EXPIRACAO',   -- valor permitido pela constraint
             duracao_segundos = EXTRACT(EPOCH FROM (NOW() - login_em))::bigint
         WHERE status_sessao = 'ATIVA'
           AND expira_em <= NOW()
@@ -117,7 +111,7 @@ export class PostgreSqlSessionStore extends session.Store {
       SET status_sessao = 'LOGOUT',
           logout_em = NOW(),
           encerrada_em = NOW(),
-          motivo_encerramento = 'logout',
+          motivo_encerramento = 'LOGOUT_USUARIO',   -- ✅ valor permitido
           duracao_segundos = EXTRACT(EPOCH FROM (NOW() - login_em))::bigint
       WHERE sid = $1
     `;
