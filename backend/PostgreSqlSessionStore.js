@@ -4,13 +4,54 @@ import session from 'express-session';
 const DUMMY_USER_UUID = '00000000-0000-0000-0000-000000000000';
 
 export class PostgreSqlSessionStore extends session.Store {
-  constructor(pool) {
+  constructor(pool, cleanupIntervalMs = 30 * 60 * 1000) {   // 30 min padrão
     super();
     this.pool = pool;
+    this.cleanupIntervalMs = cleanupIntervalMs;
+
     this.pool.on('error', (err) => {
       console.error('❌ Erro no pool PostgreSQL (store):', err);
       this.emit('disconnect');
     });
+
+    // Inicia a limpeza automática de sessões expiradas
+    this._startCleanupTimer();
+  }
+
+  _startCleanupTimer() {
+    this._cleanupTimer = setInterval(() => {
+      this.cleanupExpiredSessions();
+    }, this.cleanupIntervalMs);
+
+    // Executa uma limpeza inicial após 5 segundos
+    setTimeout(() => {
+      this.cleanupExpiredSessions();
+    }, 5000);
+  }
+
+  /**
+   * Marca como EXPIRADA todas as sessões cujo expira_em já passou e ainda estão ATIVA.
+   * Preenche encerrada_em, motivo_encerramento e duracao_segundos.
+   */
+  async cleanupExpiredSessions() {
+    try {
+      const query = `
+        UPDATE app_comissionamento.sessoes_app
+        SET status_sessao = 'EXPIRADA',
+            encerrada_em = NOW(),
+            motivo_encerramento = 'expiração',
+            duracao_segundos = EXTRACT(EPOCH FROM (NOW() - login_em))::bigint
+        WHERE status_sessao = 'ATIVA'
+          AND expira_em <= NOW()
+        RETURNING sid
+      `;
+      const result = await this.pool.query(query);
+      if (result.rows.length > 0) {
+        console.log(`🧹 [SessionStore] ${result.rows.length} sessão(ões) marcada(s) como EXPIRADA.`);
+      }
+    } catch (err) {
+      console.error('❌ [SessionStore] Erro ao limpar sessões expiradas:', err);
+    }
   }
 
   get(sid, callback) {
@@ -71,7 +112,6 @@ export class PostgreSqlSessionStore extends session.Store {
   }
 
   destroy(sid, callback) {
-    // Atualiza status, datas de logout e calcula duração em segundos
     const query = `
       UPDATE app_comissionamento.sessoes_app
       SET status_sessao = 'LOGOUT',
