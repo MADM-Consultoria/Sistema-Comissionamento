@@ -324,3 +324,22 @@ SELECT
 SELECT SUM(peso_meta_assinados_diario) AS total FROM  app_comissionamento.metricas_assessores
    WHERE classificacao_operacional in ('Discador','Judit')
     AND data_metrica ='2026-07-01';
+
+
+/*---Atualizar judit---*/
+UPDATE app_comissionamento.metricas_assessores
+SET classificacao_operacional = 'Discador'
+WHERE classificacao_operacional ='Judit'
+and data_metrica = '2026-0-01'
+
+SELECT * FROM  app_comissionamento.metricas_assessores
+   WHERE colaborador IN ('')
+AND data_metrica = '2026-0-01'
+   ORDER BY colaborador ASC;
+
+/*---Atualizar Desligados---*/
+UPDATE app_comissionamento.metricas_assessores
+SET classificacao_operacional = 'Desativado'
+WHERE colaborador IN ('Rafael Dionizio Uzueli','Jose Vitor de Oliveira','Gabriel Henrique Diniz',
+'Alison Batista Ramos','Tatiane Fernanda da Silva','Rebeca Rodrigues da Mota Moura','Taina da Silva Tome',
+'Andrea de Souza Vasconcelos')
