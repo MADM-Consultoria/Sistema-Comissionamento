@@ -24,11 +24,19 @@ export default function Login() {
   const [rememberMe, setRememberMe] = useState(false);
   const [, setLocation] = useLocation();
 
+  const currentUser = useAppStore((state) => state.currentUser);
   const setCurrentUser = useAppStore((state) => state.setCurrentUser);
 
   // Refs para evitar envios duplicados e redirecionamentos
   const isSubmittingRef = useRef(false);
   const redirectDone = useRef(false);
+
+  // ===== Se já estiver autenticado, redireciona para a Home =====
+  useEffect(() => {
+    if (currentUser && currentUser.e_mail) {
+      setLocation("/");
+    }
+  }, [currentUser, setLocation]);
 
   // ===== Buscar token CSRF ao montar a página =====
   useEffect(() => {
@@ -102,7 +110,6 @@ export default function Login() {
 
     try {
       const data = await verify2FA(tempToken, twoFactorCode);
-      // ✅ Não usamos mais accessToken — a sessão é mantida via cookie
       if (data.user && !redirectDone.current) {
         redirectDone.current = true;
         setCurrentUser(data.user);
@@ -215,8 +222,8 @@ export default function Login() {
                     onChange={(e) => setRememberMe(e.target.checked)}
                     className="w-4 h-4 text-[#09175b] border-gray-300 rounded focus:ring-[#09175b]"
                   />
-                  <label htmlFor="rememberMe" className="text-xs text-gray-600 cursor-pointer">
-                    Lembre de mim.
+                  <label htmlFor="rememberMe" className="text-xs text-gray-600 cursor-pointer" title="Mantenha‑se conectado por 30 dias">
+                    Lembrar‑me
                   </label>
                 </div>
 
