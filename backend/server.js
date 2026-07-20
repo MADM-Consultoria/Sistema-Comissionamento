@@ -5,7 +5,6 @@ import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
 import crypto from 'crypto';
-import cookieParser from 'cookie-parser';
 
 import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
@@ -50,17 +49,24 @@ app.use(helmet({
   },
 }));
 
-// ---------- Cookie Parser ----------
-app.use(cookieParser());
+// ---------- Cookie Parser manual (substitui 'cookie-parser') ----------
+app.use((req, res, next) => {
+  const raw = req.headers.cookie || '';
+  const cookies = {};
+  raw.split(';').forEach(cookie => {
+    const [name, ...rest] = cookie.trim().split('=');
+    if (name) cookies[name] = decodeURIComponent(rest.join('='));
+  });
+  req.cookies = cookies;
+  next();
+});
 
 // ---------- CSRF Double Submit Cookie ----------
-// Não utiliza sessão – evita criar sessões vazias antes do login.
 app.use((req, res, next) => {
-  // Gera um token CSRF se ainda não existir
   if (!req.cookies?.['csrf-token']) {
     const token = crypto.randomBytes(32).toString('hex');
     res.cookie('csrf-token', token, {
-      httpOnly: false,    // o frontend precisa ler este cookie
+      httpOnly: false,
       secure: isProduction,
       sameSite: 'lax',
       path: '/',
@@ -72,7 +78,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// Middleware de proteção CSRF para métodos que alteram estado
 function csrfProtection(req, res, next) {
   if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
   const token = req.headers['x-csrf-token'] || req.body._csrf;
@@ -83,12 +88,11 @@ function csrfProtection(req, res, next) {
   next();
 }
 
-// Rota para obter o token CSRF (apenas retorna o cookie existente)
 app.get('/api/csrf-token', (req, res) => {
   res.json({ csrfToken: req.csrfToken });
 });
 
-// ---------- Sessão (somente após login) ----------
+// ---------- Sessão ----------
 const sessionStore = new PostgreSqlSessionStore(pool);
 
 app.use(session({
