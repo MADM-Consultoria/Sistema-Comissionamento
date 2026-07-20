@@ -4,7 +4,7 @@ import db from '../services/db.js';
 
 const router = express.Router();
 
-// ✅ Middleware de autenticação corrigido
+// Middleware de autenticação corrigido
 function requireAuth(req, res, next) {
   if (!req.session.isAuthenticated || !req.session.userId) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
@@ -35,7 +35,7 @@ async function resolveColaboradorNome(req) {
 
 function mapGranularity(granularity) {
   const map = { daily: 'day', weekly: 'week', monthly: 'month' };
-  return map[granularity] || null;
+  return map[granularity] || null;   // valor seguro
 }
 
 function normalize(str) {
