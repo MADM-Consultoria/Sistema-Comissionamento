@@ -4,7 +4,8 @@ import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
 import session from 'express-session';
-import csrfLib from 'csrf';
+import crypto from 'crypto';
+import cookieParser from 'cookie-parser';
 
 import { pool } from './services/db.js';
 import { PostgreSqlSessionStore } from './PostgreSqlSessionStore.js';
@@ -19,7 +20,7 @@ import userRouter from './routes/user.js';
 const app = express();
 const PORT = process.env.PORT || 3007;
 
-// ---------- Trust proxy (obrigatório no Render) ----------
+// ---------- Trust proxy ----------
 app.set('trust proxy', 1);
 
 // ---------- CORS ----------
@@ -28,7 +29,7 @@ const allowedOrigins = process.env.ALLOWED_ORIGINS?.split(',') || ['http://local
 
 app.use(cors({
   origin: allowedOrigins,
-  credentials: true,                // permite envio de cookies cross‑origin
+  credentials: true,
 }));
 
 // ---------- Body parsers ----------
@@ -49,7 +50,45 @@ app.use(helmet({
   },
 }));
 
-// ---------- Sessão ----------
+// ---------- Cookie Parser ----------
+app.use(cookieParser());
+
+// ---------- CSRF Double Submit Cookie ----------
+// Não utiliza sessão – evita criar sessões vazias antes do login.
+app.use((req, res, next) => {
+  // Gera um token CSRF se ainda não existir
+  if (!req.cookies?.['csrf-token']) {
+    const token = crypto.randomBytes(32).toString('hex');
+    res.cookie('csrf-token', token, {
+      httpOnly: false,    // o frontend precisa ler este cookie
+      secure: isProduction,
+      sameSite: 'lax',
+      path: '/',
+    });
+    req.csrfToken = token;
+  } else {
+    req.csrfToken = req.cookies['csrf-token'];
+  }
+  next();
+});
+
+// Middleware de proteção CSRF para métodos que alteram estado
+function csrfProtection(req, res, next) {
+  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
+  const token = req.headers['x-csrf-token'] || req.body._csrf;
+  const cookieToken = req.cookies?.['csrf-token'];
+  if (!token || !cookieToken || token !== cookieToken) {
+    return res.status(403).json({ success: false, error: 'CSRF token inválido.' });
+  }
+  next();
+}
+
+// Rota para obter o token CSRF (apenas retorna o cookie existente)
+app.get('/api/csrf-token', (req, res) => {
+  res.json({ csrfToken: req.csrfToken });
+});
+
+// ---------- Sessão (somente após login) ----------
 const sessionStore = new PostgreSqlSessionStore(pool);
 
 app.use(session({
@@ -59,36 +98,13 @@ app.use(session({
   saveUninitialized: false,
   rolling: true,
   cookie: {
-    secure: isProduction,            // true no Render (HTTPS)
+    secure: isProduction,
     httpOnly: true,
-    sameSite: isProduction ? 'none' : 'lax',   // 'none' permite cross‑origin
-    // NÃO definir 'domain' – o cookie fica associado ao domínio do backend
+    sameSite: isProduction ? 'none' : 'lax',
   },
 }));
 
-// ---------- CSRF ----------
-const tokens = new csrfLib();
-app.use((req, res, next) => {
-  if (!req.session.csrfSecret) {
-    req.session.csrfSecret = tokens.secretSync();
-  }
-  req.csrfToken = () => tokens.create(req.session.csrfSecret);
-  next();
-});
-
-function csrfProtection(req, res, next) {
-  if (['GET', 'HEAD', 'OPTIONS'].includes(req.method)) return next();
-  const token = req.headers['x-csrf-token'] || req.body._csrf;
-  if (!tokens.verify(req.session.csrfSecret, token || '')) {
-    return res.status(403).json({ success: false, error: 'CSRF token inválido. Recarregue a página.' });
-  }
-  next();
-}
-
-// ========== ROTAS PÚBLICAS (sem autenticação) ==========
-app.get('/api/csrf-token', (req, res) => res.json({ csrfToken: req.csrfToken() }));
-
-// Heartbeat – mantém a sessão ativa (usado pelo frontend)
+// ========== ROTAS PÚBLICAS ==========
 app.get('/api/auth/ping', (req, res) => {
   if (!req.session.isAuthenticated) {
     return res.status(401).json({ success: false, error: 'Não autenticado' });
