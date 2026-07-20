@@ -343,3 +343,8 @@ SET classificacao_operacional = 'Desativado'
 WHERE colaborador IN ('Rafael Dionizio Uzueli','Jose Vitor de Oliveira','Gabriel Henrique Diniz',
 'Alison Batista Ramos','Tatiane Fernanda da Silva','Rebeca Rodrigues da Mota Moura','Taina da Silva Tome',
 'Andrea de Souza Vasconcelos')
+
+/*---Atualizar meta protocoladas---*/
+UPDATE app_comissionamento.metricas_assessores
+SET peso_meta_protocolados_mensal = ROUND(peso_meta_assinados_mensal * 0.6)
+WHERE data_metrica = '2026-07-01';
