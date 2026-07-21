@@ -1,17 +1,24 @@
 // backend/routes/admin.js
 import express from 'express';
 import db from '../services/db.js';
-import { requireAuth } from '../middleware/auth.js';
 import { body, validationResult } from 'express-validator';
 
 const router = express.Router();
+
+// Middleware de autenticação (inline, atualizado para a sessão atual)
+function requireAuth(req, res, next) {
+  if (!req.session.isAuthenticated || !req.session.userId) {
+    return res.status(401).json({ success: false, error: 'Não autenticado' });
+  }
+  next();
+}
+
 router.use(requireAuth);
 
 console.log('✅ Rotas de admin carregadas (incluindo /months)');
 
 // ============================================================
 // POST /api/admin/update-assessor-metrics (Individual)
-// ATUALIZAÇÃO POR EMAIL + DATA_METRICA
 // ============================================================
 router.post('/update-assessor-metrics', [
   body('email').notEmpty().withMessage('email é obrigatório'),
@@ -42,7 +49,6 @@ router.post('/update-assessor-metrics', [
       return res.status(400).json({ success: false, error: 'email e data_metrica são obrigatórios' });
     }
 
-    // Atualiza diretamente pelos campos email e data_metrica
     const updateQuery = `
       UPDATE app_comissionamento.metricas_assessores
       SET
@@ -119,7 +125,6 @@ router.post('/update-all-assessors-metrics', async (req, res) => {
 
     setClauses.push('updated_at = NOW()');
 
-    // data_metrica como último parâmetro
     const dataMetricaIndex = params.length + 1;
     params.push(data_metrica);
 
@@ -138,7 +143,7 @@ router.post('/update-all-assessors-metrics', async (req, res) => {
 });
 
 // ============================================================
-// POST /api/admin/update-team-metrics (Equipe) – COM LOGS
+// POST /api/admin/update-team-metrics (Equipe)
 // ============================================================
 router.post('/update-team-metrics', async (req, res) => {
   try {
@@ -286,7 +291,7 @@ router.get('/equipe-metrics', async (req, res) => {
 // GET /api/admin/months
 // ============================================================
 router.get('/months', async (req, res) => {
-  console.log('📅 Rota /api/admin/months foi chamada');
+  console.log('📅 Rota /api/admin/months foi chamada. Sessão:', req.session.isAuthenticated);
   try {
     const result = await db.query(
       `SELECT DISTINCT data_metrica 
