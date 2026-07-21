@@ -49,7 +49,7 @@ app.use(helmet({
   },
 }));
 
-// ---------- Cookie Parser manual (substitui 'cookie-parser') ----------
+// ---------- Cookie Parser manual ----------
 app.use((req, res, next) => {
   const raw = req.headers.cookie || '';
   const cookies = {};
@@ -119,7 +119,6 @@ app.get('/api/auth/ping', (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password, rememberMe } = req.body;
-
     const userResult = await pool.query(
       'SELECT e_mail, colaborador AS nome, e_mail AS email, equipe, grupo, status FROM madm.colaboradores WHERE e_mail = $1',
       [email]
@@ -157,15 +156,10 @@ app.post('/api/auth/verify-2fa', async (req, res) => {
   try {
     const { tempToken, code } = req.body;
     const userId = req.session.userId;
-
-    if (!userId || !tempToken) {
-      return res.status(400).json({ success: false, error: 'Sessão inválida. Faça login novamente.' });
-    }
+    if (!userId || !tempToken) return res.status(400).json({ success: false, error: 'Sessão inválida.' });
 
     const verification = twoFactorService.verifyCode(userId, code);
-    if (!verification.success) {
-      return res.status(401).json({ success: false, error: verification.error });
-    }
+    if (!verification.success) return res.status(401).json({ success: false, error: verification.error });
 
     delete req.session.tempToken;
     req.session.isAuthenticated = true;
@@ -190,7 +184,6 @@ app.post('/api/auth/resend-code', async (req, res) => {
   try {
     const userId = req.session.userId;
     if (!userId) return res.status(401).json({ success: false, error: 'Sessão não encontrada' });
-
     const userResult = await pool.query(
       'SELECT e_mail AS email, colaborador AS nome FROM madm.colaboradores WHERE e_mail = $1',
       [userId]
@@ -251,6 +244,25 @@ app.use('/api', colaboradoresRoutes);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRouter);
+
+// Rota adicional para meses (admin)
+app.get('/api/admin/months', async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT DISTINCT data_metrica::date 
+       FROM app_comissionamento.metricas_assessores 
+       ORDER BY data_metrica DESC`
+    );
+    const months = result.rows.map(r => {
+      const d = new Date(r.data_metrica);
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-01`;
+    });
+    res.json({ success: true, data: months });
+  } catch (err) {
+    console.error('Erro ao buscar meses:', err);
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
 
 app.get('/api/health', (req, res) => res.json({ status: 'ok' }));
 app.get('/api/ping', (req, res) => res.json({ pong: true }));
