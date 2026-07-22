@@ -6,6 +6,16 @@ const router = express.Router();
 
 const PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000';
 
+// Mapeamento status_mapeamento → status do ticket de suporte
+const STATUS_MAP = {
+  pendente: 'Aberto',
+  processando: 'Em Andamento',
+  concluido: 'Concluído',
+  suporte: 'Aguardando Suporte',
+  aviso: 'Aviso',
+  erro: 'Erro',
+};
+
 // ==================== REGISTO DE TICKET DE MOVIMENTAÇÃO ====================
 router.post('/ticket-movimentacao', async (req, res) => {
   try {
@@ -168,7 +178,7 @@ router.post('/ticket-suporte', async (req, res) => {
 // ==================== LISTAGEM DE TICKETS ====================
 router.get('/tickets-movimentacao', async (req, res) => {
   try {
-    const { status_mapeamento } = req.query;
+    const { status_mapeamento, colaborador_origem_nome, todos } = req.query;
     let query = `
       SELECT id_ticket_movimentacao, ticket_id, crm_origem, tipo_solicitacao,
              nome_cliente_informado, sobrenome_cliente_informado,
@@ -178,12 +188,20 @@ router.get('/tickets-movimentacao', async (req, res) => {
              colaborador_destino_nome, equipe_destino_nome,
              status_mapeamento, observacao_sales_ops, criado_em
       FROM app_comissionamento.tickets_movimentacao_lead
+      WHERE 1=1
     `;
     const params = [];
+    let paramIndex = 1;
 
     if (status_mapeamento) {
-      query += ' WHERE status_mapeamento = $1';
+      query += ` AND status_mapeamento = $${paramIndex++}`;
       params.push(status_mapeamento);
+    }
+    if (!todos || todos !== '1') {
+      if (colaborador_origem_nome) {
+        query += ` AND LOWER(TRIM(colaborador_origem_nome)) = LOWER(TRIM($${paramIndex++}))`;
+        params.push(colaborador_origem_nome);
+      }
     }
 
     query += ' ORDER BY criado_em DESC';
@@ -192,6 +210,80 @@ router.get('/tickets-movimentacao', async (req, res) => {
     return res.json({ success: true, data: result.rows });
   } catch (err) {
     console.error('Erro ao listar tickets:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
+  }
+});
+
+// ==================== ATUALIZAÇÃO DE TICKET (PATCH) ====================
+router.patch('/tickets-movimentacao/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { status_mapeamento, observacao_sales_ops } = req.body;
+
+    if (!status_mapeamento && observacao_sales_ops === undefined) {
+      return res.status(400).json({ success: false, error: 'Nenhum campo para atualizar.' });
+    }
+
+    // === 1. Atualiza a tabela de movimentação ===
+    const setClauses = [];
+    const values = [];
+    let paramIndex = 1;
+
+    if (status_mapeamento) {
+      setClauses.push(`status_mapeamento = $${paramIndex++}`);
+      values.push(status_mapeamento);
+    }
+    if (observacao_sales_ops !== undefined) {
+      setClauses.push(`observacao_sales_ops = $${paramIndex++}`);
+      values.push(observacao_sales_ops);
+    }
+
+    // Auditoria
+    setClauses.push(`analisado_por_usuario_id = $${paramIndex++}`);
+    values.push(PLACEHOLDER_UUID);
+    setClauses.push(`analisado_em = NOW()`);
+    setClauses.push(`atualizado_em = NOW()`);
+
+    const updateMovimentacaoQuery = `
+      UPDATE app_comissionamento.tickets_movimentacao_lead
+      SET ${setClauses.join(', ')}
+      WHERE id_ticket_movimentacao = $${paramIndex}
+      RETURNING ticket_id
+    `;
+    values.push(id);
+
+    const movResult = await pool.query(updateMovimentacaoQuery, values);
+    if (movResult.rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'Ticket de movimentação não encontrado.' });
+    }
+
+    const ticketId = movResult.rows[0].ticket_id;
+
+    // === 2. Atualiza o ticket base (tickets_suporte) ===
+    if (status_mapeamento) {
+      const statusSuporte = STATUS_MAP[status_mapeamento] || 'Aberto';
+      await pool.query(
+        `UPDATE app_comissionamento.tickets_suporte 
+         SET status = $1, atualizado_em = NOW()
+         WHERE id_ticket = $2`,
+        [statusSuporte, ticketId]
+      );
+    }
+
+    // Se foi fornecida observação, acrescenta à descrição do ticket de suporte
+    if (observacao_sales_ops && observacao_sales_ops.trim() !== '') {
+      await pool.query(
+        `UPDATE app_comissionamento.tickets_suporte 
+         SET descricao = descricao || ' | Observação (' || to_char(NOW(), 'DD/MM/YYYY HH24:MI') || '): ' || $1,
+             atualizado_em = NOW()
+         WHERE id_ticket = $2`,
+        [observacao_sales_ops, ticketId]
+      );
+    }
+
+    return res.json({ success: true, message: 'Ticket atualizado com sucesso (movimentação e ticket base).' });
+  } catch (err) {
+    console.error('Erro ao atualizar ticket:', err);
     return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });

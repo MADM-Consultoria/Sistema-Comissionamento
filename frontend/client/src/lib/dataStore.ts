@@ -296,7 +296,7 @@ export const useAppStore = create<AppStore>()(
         get().updateCurrentDates();
       },
       setCustomDateRange: (start, end) => {
-        const endNext = new Date(end); endNext.setDate(endNext.getDate() + 1);
+        const endNext = new Date(end); endNext.setDate(endNext.getDate());
         set({ customStartDate: start, customEndDate: endNext.toISOString().slice(0, 10), period: 'Custom' });
         get().updateCurrentDates();
       },
