@@ -340,11 +340,23 @@ AND data_metrica = '2026-0-01'
 /*---Atualizar Desligados---*/
 UPDATE app_comissionamento.metricas_assessores
 SET classificacao_operacional = 'Desativado'
-WHERE colaborador IN ('Rafael Dionizio Uzueli','Jose Vitor de Oliveira','Gabriel Henrique Diniz',
-'Alison Batista Ramos','Tatiane Fernanda da Silva','Rebeca Rodrigues da Mota Moura','Taina da Silva Tome',
-'Andrea de Souza Vasconcelos')
+WHERE colaborador IN ('')
 
 /*---Atualizar meta protocoladas---*/
 UPDATE app_comissionamento.metricas_assessores
 SET peso_meta_protocolados_mensal = ROUND(peso_meta_assinados_mensal * 0.6)
 WHERE data_metrica = '2026-07-01';
+
+/*---Inserir dados planilha---*/
+INSERT INTO app_comissionamento.metricas_assessores (id_assessor,email,data_metrica,comissao_bonus,colaborador,classificacao_operacional)
+VALUES (0,'@madmbrasil.com.br','2026-07-01',1,'nome','classOp')
+
+/*-----------Sessões----------*/
+SELECT * FROM  app_comissionamento.sessoes_app
+
+DELETE FROM app_comissionamento.sessoes_app
+
+SELECT pg_get_constraintdef(oid) 
+FROM pg_constraint 
+WHERE conname = 's%3AL45VjWV9TU6pL-s-p1c9NEZsdsRfoF6D.AEuCUDBTMt1kOYEfcW2gMj4svsY4zn3yhl3TEa2fmHI' 
+  AND connamespace = (SELECT oid FROM pg_namespace WHERE nspname = 'app_comissionamento');

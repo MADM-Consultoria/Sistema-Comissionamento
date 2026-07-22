@@ -15,6 +15,7 @@ import colaboradoresRoutes from './routes/colaboradores.js';
 import metricsRouter from './routes/metrics.js';
 import adminRoutes from './routes/admin.js';
 import userRouter from './routes/user.js';
+import suporteRouter from './routes/suporte.js';
 
 const app = express();
 const PORT = process.env.PORT || 3007;
@@ -244,8 +245,7 @@ app.use('/api', colaboradoresRoutes);
 app.use('/api/metrics', metricsRouter);
 app.use('/api/admin', adminRoutes);
 app.use('/api/user', userRouter);
-
-// Rota adicional para meses (admin)
+app.use('/api/suporte', suporteRouter);
 app.get('/api/admin/months', async (req, res) => {
   try {
     const result = await pool.query(

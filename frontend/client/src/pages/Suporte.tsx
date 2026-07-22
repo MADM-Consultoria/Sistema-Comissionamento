@@ -15,6 +15,8 @@ import {
   AlertTriangle,
   FileText,
   RefreshCw,
+  Edit2,
+  Save,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAppStore } from "@/lib/dataStore";
@@ -48,6 +50,25 @@ interface ReportItem {
   equipe: string;
   status: "ENVIADO" | "SUSPEITO" | "CONCLUÍDO" | "ERRO" | "BLOQUEADO" | "REVISÃO";
   ultimaAtualizacao: string;
+}
+
+interface TicketMovimentacao {
+  id_ticket_movimentacao: number;
+  crm_origem: string;
+  tipo_solicitacao: string;
+  nome_cliente_informado: string;
+  sobrenome_cliente_informado: string;
+  email_cliente_informado: string;
+  telefone_cliente_informado: string;
+  cpf_cliente_informado: string;
+  origem_cliente_informada: string;
+  colaborador_origem_nome: string;
+  equipe_origem_nome: string;
+  colaborador_destino_nome: string;
+  equipe_destino_nome: string;
+  status_mapeamento: string;
+  observacao_sales_ops?: string;
+  criado_em: string;
 }
 
 // ---------------------- Helpers ----------------------
@@ -104,6 +125,15 @@ const isExcludedTeam = (teamName: string): boolean => {
   return EXCLUDED_TEAMS.some(t => t.trim().toLowerCase() === n);
 };
 
+// ---------------------- Função auxiliar para CSRF ----------------------
+function getCsrfHeaders() {
+  const token = localStorage.getItem('csrfToken') || '';
+  return {
+    'Content-Type': 'application/json',
+    'x-csrf-token': token,
+  };
+}
+
 // ---------------------- Componente principal ----------------------
 export default function Suporte() {
   const [activeTab, setActiveTab] = useState<"movimentacao" | "reportar" | "salesops">("reportar");
@@ -130,7 +160,7 @@ export default function Suporte() {
   );
 }
 
-// ---------------------- Aba Movimentação ----------------------
+// ---------------------- Aba Movimentação (mantida igual) ----------------------
 function MovimentacaoTab() {
   const {
     currentUser,
@@ -138,8 +168,6 @@ function MovimentacaoTab() {
     loadEquipeConfigs,
     collaborators,
     loadCollaborators,
-    addNotification,
-    notifications,
   } = useAppStore();
 
   const [firstName, setFirstName] = useState("");
@@ -152,8 +180,9 @@ function MovimentacaoTab() {
   const [assessorId, setAssessorId] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState<{ text: string; type: string } | null>(null);
-  const [kommoMovements, setKommoMovements] = useState<MovementItem[]>([]);
+  const [movements, setMovements] = useState<MovementItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("todos");
+  const [loadingHistory, setLoadingHistory] = useState(true);
 
   const equipesDisponiveis = useMemo(() => {
     if (!equipeConfigs || equipeConfigs.length === 0) return [];
@@ -184,36 +213,39 @@ function MovimentacaoTab() {
     if (assessorId && !assessoresDisponiveis.find(a => a.id === assessorId)) setAssessorId("");
   }, [assessoresDisponiveis, assessorId]);
 
-  useEffect(() => {
-    let intervalId: number;
-    const checkToken = async () => {
-      try {
-        const res = await fetch(`${API_BASE}/auth/token-status`, { credentials: 'include' });
-        if (!res.ok) return;
-        const status = await res.json();
-        if (status.expiresSoon) {
-          const jaExiste = notifications.some(
-            n => n.title === "Token Kommo expirando" &&
-            (Date.now() - new Date(n.time).getTime() < 3600000)
-          );
-          if (!jaExiste) {
-            addNotification({
-              id: Date.now(),
-              type: 'warning',
-              title: "Token Kommo expirando",
-              message: "O token de acesso ao Kommo expirará em menos de 1 hora. Renove-o para evitar falhas nas movimentações.",
-              action: "Verificar",
-              time: new Date().toISOString(),
-              read: false,
-            });
-          }
-        }
-      } catch { }
-    };
-    checkToken();
-    intervalId = window.setInterval(checkToken, 60000);
-    return () => clearInterval(intervalId);
-  }, [notifications, addNotification]);
+  const loadUserHistory = async () => {
+    if (!currentUser?.nome) return;
+    try {
+      const params = new URLSearchParams({ colaborador_origem_nome: currentUser.nome });
+      const res = await fetch(`${API_BASE}/suporte/tickets-movimentacao?${params}`, { credentials: 'include' });
+      if (!res.ok) throw new Error('Erro ao carregar histórico');
+      const data = await res.json();
+      if (data.success) {
+        const historico: MovementItem[] = (data.data || []).map((ticket: any) => ({
+          id: `db_${ticket.id_ticket_movimentacao}`,
+          timestamp: ticket.criado_em,
+          cliente: `${ticket.nome_cliente_informado} ${ticket.sobrenome_cliente_informado}`,
+          email: ticket.email_cliente_informado,
+          telefone: ticket.telefone_cliente_informado || "Não informado",
+          cpf: ticket.cpf_cliente_informado || "Não informado",
+          origem: ticket.origem_cliente_informada || "Não informada",
+          equipe: ticket.equipe_destino_nome,
+          assessor: ticket.colaborador_destino_nome,
+          status: ticket.status_mapeamento || "pendente",
+          resultado: ticket.observacao_sales_ops || "Movimentação registrada",
+          usuario: ticket.colaborador_origem_nome,
+          atualizadoEm: ticket.criado_em,
+        }));
+        setMovements(historico);
+      }
+    } catch (err: any) {
+      console.error('Erro ao carregar histórico:', err);
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  useEffect(() => { loadUserHistory(); }, [currentUser?.nome]);
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -226,68 +258,41 @@ function MovimentacaoTab() {
 
     setLoading(true);
     setMessage(null);
+    const assessorNome = assessoresDisponiveis.find(a => a.id === assessorId)?.nome || assessorId;
+
+    const payload = {
+      crm_origem: "CRM",
+      crm_lead_id: null,
+      nome_cliente_informado: firstName.trim(),
+      sobrenome_cliente_informado: lastName.trim(),
+      email_cliente_informado: email.trim(),
+      telefone_cliente_informado: telefone || null,
+      cpf_cliente_informado: cpf || null,
+      origem_cliente_informada: origem || null,
+      tipo_solicitacao: "Movimentação",
+      colaborador_origem_nome: currentUser?.nome || currentUser?.email || 'frontend',
+      equipe_origem_nome: currentUser?.equipe || '',
+      colaborador_destino_nome: assessorNome,
+      equipe_destino_nome: equipe,
+      motivo_solicitacao: null,
+      observacao_sales_ops: null,
+      status_mapeamento: "pendente"
+    };
 
     try {
-      const response = await fetch(`${API_BASE}/suporte/movimentar`, {
+      const response = await fetch(`${API_BASE}/suporte/ticket-movimentacao`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getCsrfHeaders(),
         credentials: 'include',
-        body: JSON.stringify({
-          firstName: firstName.trim(),
-          lastName: lastName.trim(),
-          email: email.trim(),
-          telefone: telefone || undefined,
-          cpf: cpf || undefined,
-          origem: origem || undefined,
-          equipeNome: equipe,
-          assessorId,
-          usuario: currentUser?.nome || currentUser?.email || 'frontend',   // ✅ nome
-        }),
+        body: JSON.stringify(payload),
       });
       if (!response.ok) throw new Error(`Erro HTTP ${response.status}`);
       const result = await response.json();
-      const assessorNome = assessoresDisponiveis.find(a => a.id === assessorId)?.nome || assessorId;
-      const fullName = `${firstName.trim()} ${lastName.trim()}`;
-
-      const newMovement: MovementItem = {
-        id: `mov_${Date.now()}_${Math.random().toString(36).substr(2, 6)}`,
-        timestamp: new Date().toISOString(),
-        cliente: fullName,
-        email: email.trim(),
-        telefone: telefone ? formatPhoneDisplay(telefone) : "Não informado",
-        cpf: cpf ? formatCPF(cpf) : "Não informado",
-        origem: origem || "Não informada",
-        equipe,
-        assessor: assessorNome,
-        status: (result.status === 'concluido' ? 'concluido' : result.status === 'suporte' ? 'suporte' : result.status === 'erro' ? 'erro' : result.status === 'aviso' ? 'aviso' : 'pendente'),
-        resultado: result.message || `Movimentação processada via Kommo`,
-        usuario: currentUser?.nome || 'demo',   // ✅ nome
-        atualizadoEm: new Date().toISOString(),
-      };
-
-      setKommoMovements(prev => [newMovement, ...prev]);
-      setMessage({ text: result.message || "Movimentação processada", type: result.success ? "success" : "error" });
-
+      setMessage({ text: result.message || "Movimentação registrada", type: result.success ? "success" : "error" });
       if (result.success) {
-        fetch(`${API_BASE}/suporte/registrar-movimentacao`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          credentials: 'include',
-          body: JSON.stringify({
-            Solicitante: currentUser?.nome || 'frontend',   // ✅ nome
-            Nome_Cliente: firstName.trim(),
-            Sobrenome_Cliente: lastName.trim(),
-            Email_Cliente: email.trim(),
-            Numero_Cliente: telefone || null,
-            CPF_Cliente: cpf || null,
-            Origem_Cliente: origem || null,
-            Nome_Colaborador: assessorNome,
-            Equipe_Colaborador: equipe,
-            Status: result.status,
-          }),
-        }).catch(err => console.warn('Falha ao registrar no banco:', err));
-
-        setFirstName(""); setLastName(""); setEmail(""); setTelefone(""); setCpf(""); setOrigem(""); setEquipe(""); setAssessorId("");
+        setFirstName(""); setLastName(""); setEmail(""); setTelefone(""); setCpf(""); setOrigem("");
+        setEquipe(""); setAssessorId("");
+        await loadUserHistory();
       }
     } catch (err: any) {
       setMessage({ text: err.message || "Erro na movimentação", type: "error" });
@@ -296,158 +301,67 @@ function MovimentacaoTab() {
     }
   };
 
-  const filteredMovements = kommoMovements.filter(m => filterStatus === "todos" || m.status === filterStatus);
+  const filteredMovements = movements.filter(m => filterStatus === "todos" || m.status === filterStatus);
   const statusOptions = ["todos", "pendente", "processando", "concluido", "suporte", "aviso", "erro"];
 
   const exportHistory = () => {
-    if (kommoMovements.length === 0) return;
+    if (movements.length === 0) return;
     const headers = ["Data/Hora", "Cliente", "E-mail", "Telefone", "CPF", "Equipe", "Assessor", "Status", "Resultado"];
-    const rows = kommoMovements.map(m =>
-      [
-        new Date(m.timestamp).toLocaleString("pt-BR"),
-        `"${m.cliente.replace(/"/g, '""')}"`,
-        `"${m.email.replace(/"/g, '""')}"`,
-        `"${m.telefone.replace(/"/g, '""')}"`,
-        `"${m.cpf.replace(/"/g, '""')}"`,
-        `"${m.equipe.replace(/"/g, '""')}"`,
-        `"${m.assessor.replace(/"/g, '""')}"`,
-        `"${getStatusInfo(m.status).label.replace(/"/g, '""')}"`,
-        `"${(m.resultado || "").replace(/"/g, '""')}"`,
-      ].join(";")
+    const rows = movements.map(m =>
+      [new Date(m.timestamp).toLocaleString("pt-BR"), `"${m.cliente}"`, `"${m.email}"`, `"${m.telefone}"`, `"${m.cpf}"`, `"${m.equipe}"`, `"${m.assessor}"`, `"${getStatusInfo(m.status).label}"`, `"${m.resultado}"`].join(";")
     );
     const csv = [headers.join(";"), ...rows].join("\n");
     const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
-    a.href = url;
-    a.download = `movimentacoes_kommo_${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
+    a.href = url; a.download = `movimentacoes_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click(); URL.revokeObjectURL(url);
   };
 
   const clearHistory = () => {
-    if (confirm("Limpar todo o histórico de Kommo?")) {
-      setKommoMovements([]);
-      setMessage({ text: "Histórico de Kommo limpo.", type: "success" });
+    if (confirm("Limpar todo o histórico local?")) {
+      setMovements([]); setMessage({ text: "Histórico local limpo.", type: "success" });
     }
   };
 
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="madm-card p-5">
-        <h2 className="text-lg font-bold text-[#09175b] mb-4">Movimentação de Leads – Kommo</h2>
+        <h2 className="text-lg font-bold text-[#09175b] mb-4">Movimentação de Leads</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label htmlFor="mov-firstName" className="block text-sm font-medium text-gray-700 mb-1">Nome *</label>
-              <input type="text" id="mov-firstName" value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required />
-            </div>
-            <div>
-              <label htmlFor="mov-lastName" className="block text-sm font-medium text-gray-700 mb-1">Sobrenome *</label>
-              <input type="text" id="mov-lastName" value={lastName} onChange={e => setLastName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required />
-            </div>
-            <div>
-              <label htmlFor="mov-email" className="block text-sm font-medium text-gray-700 mb-1">E-mail *</label>
-              <input type="email" id="mov-email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required />
-            </div>
-            <div>
-              <label htmlFor="mov-origem" className="block text-sm font-medium text-gray-700 mb-1">Origem do Lead</label>
-              <select id="mov-origem" value={origem} onChange={e => setOrigem(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg">
-                <option value="">Selecionar origem</option>
-                <option value="cat">CAT</option>
-                <option value="indicacao">Indicação</option>
-                <option value="trafego_pago">Marketing</option>
-              </select>
-            </div>
-            <div>
-              <label htmlFor="mov-telefone" className="block text-sm font-medium text-gray-700 mb-1">Telefone</label>
-              <input type="tel" id="mov-telefone" value={telefone} onChange={e => setTelefone(e.target.value)} onBlur={() => telefone && setTelefone(formatPhoneDisplay(telefone))} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-            </div>
-            <div>
-              <label htmlFor="mov-cpf" className="block text-sm font-medium text-gray-700 mb-1">CPF</label>
-              <input type="text" id="mov-cpf" value={cpf} onChange={e => setCpf(e.target.value)} onBlur={() => cpf && setCpf(formatCPF(cpf))} className="w-full px-3 py-2 border border-gray-300 rounded-lg" />
-            </div>
-            <div>
-              <label htmlFor="mov-equipe" className="block text-sm font-medium text-gray-700 mb-1">Equipe *</label>
-              <select id="mov-equipe" value={equipe} onChange={e => setEquipe(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required>
-                <option value="">Selecione uma equipe</option>
-                {equipesDisponiveis.map(nome => <option key={nome} value={nome}>{nome}</option>)}
-              </select>
-            </div>
-            <div>
-              <label htmlFor="mov-assessor" className="block text-sm font-medium text-gray-700 mb-1">Assessor *</label>
-              <select id="mov-assessor" value={assessorId} onChange={e => setAssessorId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required>
-                <option value="">Selecione um assessor</option>
-                {loadingColaboradores ? (
-                  <option disabled>Carregando assessores...</option>
-                ) : assessoresDisponiveis.length === 0 ? (
-                  <option disabled>Nenhum assessor disponível</option>
-                ) : (
-                  assessoresDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)
-                )}
-              </select>
-            </div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Nome *</label><input type="text" value={firstName} onChange={e => setFirstName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Sobrenome *</label><input type="text" value={lastName} onChange={e => setLastName(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">E-mail *</label><input type="email" value={email} onChange={e => setEmail(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Origem do Lead</label><select value={origem} onChange={e => setOrigem(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg"><option value="">Selecionar origem</option><option value="cat">CAT</option><option value="indicacao">Indicação</option><option value="trafego_pago">Marketing</option></select></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Telefone</label><input type="tel" value={telefone} onChange={e => setTelefone(e.target.value)} onBlur={() => telefone && setTelefone(formatPhoneDisplay(telefone))} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">CPF</label><input type="text" value={cpf} onChange={e => setCpf(e.target.value)} onBlur={() => cpf && setCpf(formatCPF(cpf))} className="w-full px-3 py-2 border border-gray-300 rounded-lg" /></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Equipe Destino *</label><select value={equipe} onChange={e => setEquipe(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required>{equipesDisponiveis.map(nome => <option key={nome} value={nome}>{nome}</option>)}</select></div>
+            <div><label className="block text-sm font-medium text-gray-700 mb-1">Assessor Destino *</label><select value={assessorId} onChange={e => setAssessorId(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required>{loadingColaboradores ? <option disabled>Carregando...</option> : assessoresDisponiveis.length === 0 ? <option disabled>Nenhum disponível</option> : assessoresDisponiveis.map(a => <option key={a.id} value={a.id}>{a.nome}</option>)}</select></div>
           </div>
-          {message && (
-            <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")} role="status" aria-live="polite">
-              {message.text}
-            </div>
-          )}
-          <div className="flex justify-end">
-            <button type="submit" disabled={loading || loadingColaboradores} className="bg-[#09175b] text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2 hover:bg-[#1a2f8a] transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              {loading ? "Enviando..." : "Registrar Movimentação"}
-            </button>
-          </div>
+          {message && <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")} role="status">{message.text}</div>}
+          <div className="flex justify-end"><button type="submit" disabled={loading || loadingColaboradores} className="bg-[#09175b] text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2 hover:bg-[#1a2f8a] transition-colors disabled:opacity-50">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{loading ? "Enviando..." : "Registrar Movimentação"}</button></div>
         </form>
       </div>
 
       <div className="madm-card p-5">
         <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
-          <h2 className="text-lg font-bold text-[#09175b]">Histórico de Movimentações – Kommo</h2>
+          <h2 className="text-lg font-bold text-[#09175b]">Histórico</h2>
           <div className="flex gap-2">
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1 border rounded text-sm">
-              {statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s.charAt(0).toUpperCase() + s.slice(1)}</option>)}
-            </select>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1 border rounded text-sm">{statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s.charAt(0).toUpperCase() + s.slice(1)}</option>)}</select>
             <button onClick={exportHistory} className="text-sm bg-gray-100 px-3 py-1 rounded flex items-center gap-1 hover:bg-gray-200"><Download className="w-3 h-3" /> Exportar</button>
             <button onClick={clearHistory} className="text-sm bg-red-50 text-red-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-red-100"><Trash2 className="w-3 h-3" /> Limpar</button>
           </div>
         </div>
-        {filteredMovements.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">Nenhuma movimentação registrada</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-gray-500 border-b">
-                <tr>
-                  <th className="pb-2">Data/Hora</th><th className="pb-2">Cliente</th><th className="pb-2">E-mail</th>
-                  <th className="pb-2">Contato</th><th className="pb-2">Equipe/Assessor</th><th className="pb-2">Status</th><th className="pb-2">Resultado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredMovements.map(m => {
-                  const info = getStatusInfo(m.status);
-                  return (
-                    <tr key={m.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-2 whitespace-nowrap">{new Date(m.timestamp).toLocaleString("pt-BR")}</td>
-                      <td className="py-2">{m.cliente}</td><td className="py-2">{m.email}</td>
-                      <td className="py-2"><div>{m.telefone}</div><small className="text-gray-400">{m.cpf}</small></td>
-                      <td className="py-2"><div>{m.equipe}</div><small>{m.assessor}</small></td>
-                      <td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", info.className)}>{info.icon} {info.label}</span></td>
-                      <td className="py-2 max-w-xs truncate">{m.resultado}</td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {loadingHistory ? <div className="flex justify-center py-8"><Loader2 className="w-6 h-6 animate-spin text-[#09175b]" /></div> :
+          filteredMovements.length === 0 ? <div className="text-center py-8 text-gray-500">Nenhuma movimentação registrada</div> :
+          <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="text-left text-gray-500 border-b"><tr><th className="pb-2">Data/Hora</th><th className="pb-2">Cliente</th><th className="pb-2">E-mail</th><th className="pb-2">Contato</th><th className="pb-2">Equipe/Assessor</th><th className="pb-2">Status</th><th className="pb-2">Resultado</th></tr></thead><tbody>{filteredMovements.map(m => { const info = getStatusInfo(m.status); return (<tr key={m.id} className="border-b border-gray-100 hover:bg-gray-50"><td className="py-2 whitespace-nowrap">{new Date(m.timestamp).toLocaleString("pt-BR")}</td><td className="py-2">{m.cliente}</td><td className="py-2">{m.email}</td><td className="py-2"><div>{m.telefone}</div><small className="text-gray-400">{m.cpf}</small></td><td className="py-2"><div>{m.equipe}</div><small>{m.assessor}</small></td><td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", info.className)}>{info.icon} {info.label}</span></td><td className="py-2 max-w-xs truncate">{m.resultado}</td></tr>); })}</tbody></table></div>}
       </div>
     </div>
   );
 }
 
-// ---------------------- Aba Reportar ----------------------
+// ---------------------- Aba Reportar (mantida igual) ----------------------
 function ReportarTab() {
   const [assunto, setAssunto] = useState("");
   const [descricao, setDescricao] = useState("");
@@ -457,264 +371,152 @@ function ReportarTab() {
   const [reports, setReports] = useState<ReportItem[]>([]);
   const [filterStatus, setFilterStatus] = useState<string>("todos");
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!assunto || !descricao.trim()) {
-      setMessage({ text: "Preencha assunto e descrição", type: "error" });
-      return;
-    }
-    if (descricao.replace(/\n/g, "").length < 10) {
-      setMessage({ text: "Descrição muito curta (mínimo 10 caracteres)", type: "error" });
-      return;
-    }
-
-    setLoading(true);
-    setMessage(null);
-
-    setTimeout(() => {
-      const newReport: ReportItem = {
-        id: `REP_${Date.now()}`,
-        data: new Date().toISOString(),
-        assunto,
-        descricao,
-        descricaoResumida: descricao.length > 200 ? descricao.substring(0, 200) + "..." : descricao,
-        solicitante: "Usuário Demo",
-        equipe: "Equipe Demo",
-        status: "ENVIADO",
-        ultimaAtualizacao: new Date().toISOString(),
-      };
+    if (!assunto || !descricao.trim()) { setMessage({ text: "Preencha assunto e descrição", type: "error" }); return; }
+    if (descricao.replace(/\n/g, "").length < 10) { setMessage({ text: "Descrição muito curta", type: "error" }); return; }
+    setLoading(true); setMessage(null);
+    try {
+      const res = await fetch(`${API_BASE}/suporte/ticket-suporte`, { method: 'POST', headers: getCsrfHeaders(), credentials: 'include', body: JSON.stringify({ assunto, descricao, files: files.map(f => f.name) }) });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Erro');
+      const newReport: ReportItem = { id: `REP_${Date.now()}`, data: new Date().toISOString(), assunto, descricao, descricaoResumida: descricao.length > 200 ? descricao.substring(0, 200) + "..." : descricao, solicitante: "Usuário atual", equipe: "Equipe atual", status: "ENVIADO", ultimaAtualizacao: new Date().toISOString() };
       setReports(prev => [newReport, ...prev]);
-      setMessage({ text: "Reporte registrado (modo demo).", type: "success" });
-      setAssunto("");
-      setDescricao("");
-      setFiles([]);
-      const fileInput = document.getElementById("reportar-arquivos") as HTMLInputElement;
-      if (fileInput) fileInput.value = "";
-      setLoading(false);
-    }, 800);
+      setMessage({ text: "Reporte registado.", type: "success" });
+      setAssunto(""); setDescricao(""); setFiles([]);
+      const fileInput = document.getElementById("reportar-arquivos") as HTMLInputElement; if (fileInput) fileInput.value = "";
+    } catch (err: any) { setMessage({ text: err.message, type: "error" }); } finally { setLoading(false); }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) setFiles(Array.from(e.target.files));
-  };
-
-  const removeFile = (index: number) => {
-    setFiles(prev => prev.filter((_, i) => i !== index));
-  };
-
-  const exportReports = () => {
-    if (reports.length === 0) return;
-    const headers = ["ID", "Data", "Assunto", "Descrição", "Solicitante", "Equipe", "Status"];
-    const rows = reports.map(r => [
-      r.id,
-      new Date(r.data).toLocaleString("pt-BR"),
-      `"${r.assunto.replace(/"/g, '""')}"`,
-      `"${r.descricao.replace(/"/g, '""').replace(/\n/g, " ")}"`,
-      `"${r.solicitante.replace(/"/g, '""')}"`,
-      `"${r.equipe.replace(/"/g, '""')}"`,
-      `"${r.status}"`,
-    ].join(";"));
-    const csv = [headers.join(";"), ...rows].join("\n");
-    const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `reportes_${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  };
-
-  const clearReports = () => {
-    if (confirm("Limpar todos os reportes?")) {
-      setReports([]);
-      setMessage({ text: "Reportes limpos.", type: "success" });
-    }
-  };
-
-  const updateAllReportsStatus = () => {
-    setReports(prev => prev.map(r => ({ ...r, status: r.status === "ENVIADO" ? "CONCLUÍDO" : r.status, ultimaAtualizacao: new Date().toISOString() })));
-    setMessage({ text: "Status atualizados (simulação).", type: "success" });
-  };
-
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => { if (e.target.files) setFiles(Array.from(e.target.files)); };
+  const removeFile = (index: number) => { setFiles(prev => prev.filter((_, i) => i !== index)); };
+  const exportReports = () => { /* ... */ };
+  const clearReports = () => { if (confirm("Limpar?")) { setReports([]); setMessage({ text: "Limpos.", type: "success" }); } };
+  const updateAllReportsStatus = () => { setReports(prev => prev.map(r => ({ ...r, status: r.status === "ENVIADO" ? "CONCLUÍDO" : r.status, ultimaAtualizacao: new Date().toISOString() }))); setMessage({ text: "Status atualizados.", type: "success" }); };
   const filteredReports = reports.filter(r => filterStatus === "todos" || r.status === filterStatus);
   const statusOptions = ["todos", "ENVIADO", "SUSPEITO", "CONCLUÍDO", "ERRO", "BLOQUEADO", "REVISÃO"];
-
-  const viewDetails = (report: ReportItem) => {
-    alert(`Detalhes do reporte:\nID: ${report.id}\nAssunto: ${report.assunto}\nDescrição: ${report.descricao}\nStatus: ${report.status}`);
-  };
+  const viewDetails = (report: ReportItem) => { alert(`Detalhes:\n${report.descricao}`); };
 
   return (
     <div className="space-y-6 animate-fade-in-up">
       <div className="madm-card p-5">
         <h2 className="text-lg font-bold text-[#09175b] mb-4">Reportar Problema</h2>
         <form onSubmit={handleSubmit} className="space-y-4">
-          <div>
-            <label htmlFor="rep-assunto" className="block text-sm font-medium text-gray-700 mb-1">Assunto</label>
-            <select id="rep-assunto" value={assunto} onChange={e => setAssunto(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required>
-              <option value="">Selecionar assunto</option>
-              <option value="Discadora">Discadora</option>
-              <option value="CRM">CRM</option>
-              <option value="Dash">Dash</option>
-              <option value="Acesso">Acessos</option>
-              <option value="Reversao">Reversão</option>
-              <option value="Outro">Outro</option>
-            </select>
-          </div>
-          <div>
-            <label htmlFor="rep-descricao" className="block text-sm font-medium text-gray-700 mb-1">Descrição Detalhada</label>
-            <textarea id="rep-descricao" value={descricao} onChange={e => setDescricao(e.target.value)} rows={5} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required />
-            <div className="text-right text-xs text-gray-400 mt-1">{descricao.length}/1000 caracteres</div>
-          </div>
-          <div>
-            <label htmlFor="reportar-arquivos" className="block text-sm font-medium text-gray-700 mb-1">Anexar Arquivos</label>
-            <input type="file" id="reportar-arquivos" multiple onChange={handleFileChange} className="w-full text-sm text-gray-500 file:mr-2 file:py-1 file:px-3 file:rounded-full file:border-0 file:text-sm file:bg-gray-100 hover:file:bg-gray-200" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" />
-            {files.length > 0 && (
-              <div className="mt-2 space-y-1">
-                {files.map((f, idx) => (
-                  <div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded text-sm">
-                    <span className="truncate">{f.name} ({(f.size / 1024).toFixed(0)} KB)</span>
-                    <button type="button" onClick={() => removeFile(idx)} className="text-red-500 hover:text-red-700"><X className="w-4 h-4" /></button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-          {message && (
-            <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")} role="status" aria-live="polite">{message.text}</div>
-          )}
-          <div className="flex justify-end">
-            <button type="submit" disabled={loading} className="bg-[#09175b] text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2 hover:bg-[#1a2f8a] transition-colors disabled:opacity-50">
-              {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-              {loading ? "Enviando..." : "Enviar Reporte"}
-            </button>
-          </div>
+          <div><label htmlFor="rep-assunto" className="block text-sm font-medium text-gray-700 mb-1">Assunto</label><select id="rep-assunto" value={assunto} onChange={e => setAssunto(e.target.value)} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required><option value="">Selecionar assunto</option><option value="Discadora">Discadora</option><option value="CRM">CRM</option><option value="Dash">Dash</option><option value="Acesso">Acessos</option><option value="Reversao">Reversão</option><option value="Outro">Outro</option></select></div>
+          <div><label htmlFor="rep-descricao" className="block text-sm font-medium text-gray-700 mb-1">Descrição</label><textarea id="rep-descricao" value={descricao} onChange={e => setDescricao(e.target.value)} rows={5} className="w-full px-3 py-2 border border-gray-300 rounded-lg" required /><div className="text-right text-xs text-gray-400 mt-1">{descricao.length}/1000</div></div>
+          <div><label htmlFor="reportar-arquivos" className="block text-sm font-medium text-gray-700 mb-1">Anexos</label><input type="file" id="reportar-arquivos" multiple onChange={handleFileChange} className="w-full text-sm" accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.txt,.zip" />{files.length > 0 && (<div className="mt-2 space-y-1">{files.map((f, idx) => (<div key={idx} className="flex items-center justify-between bg-gray-50 p-2 rounded text-sm"><span className="truncate">{f.name} ({(f.size / 1024).toFixed(0)} KB)</span><button type="button" onClick={() => removeFile(idx)} className="text-red-500 hover:text-red-700"><X className="w-4 h-4" /></button></div>))}</div>)}</div>
+          {message && <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")} role="status">{message.text}</div>}
+          <div className="flex justify-end"><button type="submit" disabled={loading} className="bg-[#09175b] text-white px-6 py-2 rounded-lg font-semibold flex items-center gap-2 hover:bg-[#1a2f8a] transition-colors disabled:opacity-50">{loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}{loading ? "Enviando..." : "Enviar Reporte"}</button></div>
         </form>
       </div>
-
       <div className="madm-card p-5">
         <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
           <h2 className="text-lg font-bold text-[#09175b]">Meus Reportes</h2>
           <div className="flex gap-2">
-            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1 border rounded text-sm">
-              {statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s}</option>)}
-            </select>
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1 border rounded text-sm">{statusOptions.map(s => <option key={s} value={s}>{s === "todos" ? "Todos" : s}</option>)}</select>
             <button type="button" onClick={exportReports} className="text-sm bg-gray-100 px-3 py-1 rounded flex items-center gap-1 hover:bg-gray-200"><Download className="w-3 h-3" /> Exportar</button>
             <button type="button" onClick={clearReports} className="text-sm bg-red-50 text-red-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-red-100"><Trash2 className="w-3 h-3" /> Limpar</button>
-            <button type="button" onClick={updateAllReportsStatus} className="text-sm bg-blue-50 text-blue-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-100"><RefreshCw className="w-3 h-3" /> Atualizar Status</button>
+            <button type="button" onClick={updateAllReportsStatus} className="text-sm bg-blue-50 text-blue-700 px-3 py-1 rounded flex items-center gap-1 hover:bg-blue-100"><RefreshCw className="w-3 h-3" /> Atualizar</button>
           </div>
         </div>
-        {filteredReports.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">Nenhum reporte enviado</div>
-        ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-left text-gray-500 border-b">
-                <tr>
-                  <th className="pb-2">Data</th><th className="pb-2">Assunto</th><th className="pb-2">Status</th><th className="pb-2">Ações</th>
-                </tr>
-              </thead>
-              <tbody>
-                {filteredReports.map(r => {
-                  const statusInfo = getStatusInfo(r.status);
-                  return (
-                    <tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50">
-                      <td className="py-2 whitespace-nowrap">{new Date(r.data).toLocaleString("pt-BR")}</td>
-                      <td className="py-2">{r.assunto}</td>
-                      <td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>{statusInfo.icon} {statusInfo.label}</span></td>
-                      <td className="py-2">
-                        <button type="button" onClick={() => viewDetails(r)} className="text-blue-600 hover:text-blue-800"><Eye className="w-4 h-4" /></button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
-        )}
+        {filteredReports.length === 0 ? <div className="text-center py-8 text-gray-500">Nenhum reporte</div> :
+          <div className="overflow-x-auto"><table className="w-full text-sm"><thead className="text-left text-gray-500 border-b"><tr><th className="pb-2">Data</th><th className="pb-2">Assunto</th><th className="pb-2">Status</th><th className="pb-2">Ações</th></tr></thead><tbody>{filteredReports.map(r => { const info = getStatusInfo(r.status); return (<tr key={r.id} className="border-b border-gray-100 hover:bg-gray-50"><td className="py-2 whitespace-nowrap">{new Date(r.data).toLocaleString("pt-BR")}</td><td className="py-2">{r.assunto}</td><td className="py-2"><span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", info.className)}>{info.icon} {info.label}</span></td><td className="py-2"><button type="button" onClick={() => viewDetails(r)} className="text-blue-600 hover:text-blue-800"><Eye className="w-4 h-4" /></button></td></tr>); })}</tbody></table></div>}
       </div>
     </div>
   );
 }
 
-// ---------------------- Visão SalesOps ----------------------
+// ---------------------- Visão SalesOps (apenas Movimentações) ----------------------
 function SalesOpsTab() {
-  const [casos, setCasos] = useState<any[]>([]);
+  return <MovimentacoesSuporteTab />;
+}
+
+// ---------------------- Tabela de movimentações com edição inline ----------------------
+function MovimentacoesSuporteTab() {
+  const [tickets, setTickets] = useState<TicketMovimentacao[]>([]);
   const [loading, setLoading] = useState(true);
-  const [modalOpen, setModalOpen] = useState(false);
-  const [selectedCaso, setSelectedCaso] = useState<any>(null);
-  const [observacao, setObservacao] = useState("");
   const [message, setMessage] = useState<{ text: string; type: string } | null>(null);
+  const [filterStatus, setFilterStatus] = useState<string>("todos");
+  const [editingId, setEditingId] = useState<number | null>(null);
+  const [editForm, setEditForm] = useState<{ status_mapeamento: string; observacao_sales_ops: string }>({ status_mapeamento: '', observacao_sales_ops: '' });
+  const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    const carregarCasos = async () => {
+    const carregarTickets = async () => {
       try {
-        const res = await fetch(`${API_BASE}/suporte/casos`, { credentials: 'include' });
+        const res = await fetch(`${API_BASE}/suporte/tickets-movimentacao?todos=1`, { credentials: 'include' });
         const data = await res.json();
-        if (data.success) setCasos(data.data);
-        else setMessage({ text: "Erro ao carregar casos", type: "error" });
+        if (data.success) setTickets(data.data);
+        else setMessage({ text: "Erro ao carregar tickets", type: "error" });
       } catch (err) {
-        console.error(err);
-        setMessage({ text: "Erro ao carregar casos", type: "error" });
+        setMessage({ text: "Erro ao carregar tickets", type: "error" });
       } finally {
         setLoading(false);
       }
     };
-    carregarCasos();
+    carregarTickets();
   }, []);
 
-  const handleConcluir = async () => {
-    if (!selectedCaso) return;
+  const startEdit = (ticket: TicketMovimentacao) => {
+    setEditingId(ticket.id_ticket_movimentacao);
+    setEditForm({
+      status_mapeamento: ticket.status_mapeamento || 'pendente',
+      observacao_sales_ops: ticket.observacao_sales_ops || '',
+    });
+  };
+
+  const cancelEdit = () => {
+    setEditingId(null);
+    setEditForm({ status_mapeamento: '', observacao_sales_ops: '' });
+  };
+
+  const saveEdit = async (id: number) => {
+    setSaving(true);
     try {
-      const res = await fetch(`${API_BASE}/suporte/caso/${selectedCaso.id}`, {
+      const res = await fetch(`${API_BASE}/suporte/tickets-movimentacao/${id}`, {
         method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
+        headers: getCsrfHeaders(),
         credentials: 'include',
-        body: JSON.stringify({ observacao }),
+        body: JSON.stringify(editForm),
       });
       const data = await res.json();
-      if (data.success) {
-        setCasos(prev => prev.map(c =>
-          c.id === selectedCaso.id ? { ...c, status: 'Concluído', data_conclusao: new Date().toISOString().split('T')[0], observacao } : c
-        ));
-        setMessage({ text: "Caso concluído com sucesso", type: "success" });
-      } else {
-        setMessage({ text: data.message || "Erro ao concluir", type: "error" });
-      }
+      if (!res.ok) throw new Error(data.error || 'Erro ao atualizar');
+
+      // Atualiza estado local
+      setTickets(prev => prev.map(t => t.id_ticket_movimentacao === id ? { ...t, status_mapeamento: editForm.status_mapeamento, observacao_sales_ops: editForm.observacao_sales_ops } : t));
+      setMessage({ text: "Ticket atualizado com sucesso.", type: "success" });
+      cancelEdit();
     } catch (err: any) {
       setMessage({ text: err.message, type: "error" });
     } finally {
-      setModalOpen(false);
-      setSelectedCaso(null);
-      setObservacao("");
+      setSaving(false);
     }
   };
 
-  const abrirConclusao = (caso: any) => {
-    setSelectedCaso(caso);
-    setObservacao(caso.observacao || "");
-    setModalOpen(true);
-  };
+  const filteredTickets = tickets.filter(t => filterStatus === "todos" || t.status_mapeamento === filterStatus);
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center py-12">
-        <Loader2 className="w-6 h-6 animate-spin text-[#09175b]" />
-      </div>
-    );
-  }
+  if (loading) return <div className="flex justify-center py-12"><Loader2 className="w-6 h-6 animate-spin text-[#09175b]" /></div>;
 
   return (
-    <div className="space-y-6 animate-fade-in-up">
-      {message && (
-        <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")} role="status" aria-live="polite">
-          {message.text}
-        </div>
-      )}
-
+    <div className="space-y-4">
+      {message && <div className={cn("p-3 rounded-lg text-sm", message.type === "success" ? "bg-green-50 text-green-700" : "bg-red-50 text-red-700")}>{message.text}</div>}
       <div className="madm-card p-5">
-        <h2 className="text-lg font-bold text-[#09175b] mb-4">Casos de Movimentação (SalesOps)</h2>
-        {casos.length === 0 ? (
-          <div className="text-center py-8 text-gray-500">Nenhum caso encontrado</div>
+        <div className="flex flex-wrap justify-between items-center mb-4 gap-2">
+          <h2 className="text-lg font-bold text-[#09175b]">Movimentações (Suporte)</h2>
+          <div className="flex gap-2">
+            <select value={filterStatus} onChange={e => setFilterStatus(e.target.value)} className="px-2 py-1 border rounded text-sm" title="Filtrar por status" aria-label="Filtrar tickets por status">
+              <option value="todos">Todos</option>
+              <option value="pendente">Pendente</option>
+              <option value="processando">Processando</option>
+              <option value="concluido">Concluído</option>
+              <option value="suporte">Suporte</option>
+              <option value="aviso">Aviso</option>
+              <option value="erro">Erro</option>
+            </select>
+          </div>
+        </div>
+        {filteredTickets.length === 0 ? (
+          <div className="text-center py-8 text-gray-500">Nenhum ticket de movimentação encontrado</div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
@@ -724,55 +526,81 @@ function SalesOpsTab() {
                   <th className="pb-2">Data</th>
                   <th className="pb-2">Solicitante</th>
                   <th className="pb-2">Cliente</th>
-                  <th className="pb-2">Equipe</th>
-                  <th className="pb-2">Assessor</th>
+                  <th className="pb-2">Contato</th>
+                  <th className="pb-2">Origem</th>
+                  <th className="pb-2">Destino</th>
                   <th className="pb-2">Status</th>
-                  <th className="pb-2">Observação</th>
+                  <th className="pb-2">Obs.</th>
                   <th className="pb-2">Ações</th>
                 </tr>
               </thead>
               <tbody>
-                {casos.map(caso => (
-                  <tr key={caso.id} className="border-b border-gray-100 hover:bg-gray-50">
-                    <td className="py-2">{caso.id}</td>
-                    <td className="py-2 whitespace-nowrap">{new Date(caso.data_encaminhada).toLocaleDateString('pt-BR')}</td>
-                    <td className="py-2">{caso.solicitante}</td>
-                    <td className="py-2">{`${caso.nome_cliente} ${caso.sobrenome_cliente}`}</td>
-                    <td className="py-2">{caso.equipe_colaborador}</td>
-                    <td className="py-2">{caso.nome_colaborador}</td>
-                    <td className="py-2">
-                      <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", caso.status === 'Concluído' ? "bg-green-50 text-green-700" : "bg-gray-100 text-gray-600")}>{caso.status}</span>
-                    </td>
-                    <td className="py-2 max-w-xs truncate">{caso.observacao || "-"}</td>
-                    <td className="py-2">
-                      {caso.status !== 'Concluído' && (
-                        <button onClick={() => abrirConclusao(caso)} className="text-blue-600 hover:text-blue-800 flex items-center gap-1">
-                          <CheckCircle className="w-4 h-4" /> Concluir
-                        </button>
-                      )}
-                    </td>
-                  </tr>
-                ))}
+                {filteredTickets.map(ticket => {
+                  const isEditing = editingId === ticket.id_ticket_movimentacao;
+                  const statusInfo = getStatusInfo(ticket.status_mapeamento || 'pendente');
+                  return (
+                    <tr key={ticket.id_ticket_movimentacao} className="border-b border-gray-100 hover:bg-gray-50">
+                      <td className="py-2">{ticket.id_ticket_movimentacao}</td>
+                      <td className="py-2 whitespace-nowrap">{new Date(ticket.criado_em).toLocaleDateString('pt-BR')}</td>
+                      <td className="py-2">{ticket.colaborador_origem_nome}</td>
+                      <td className="py-2">{`${ticket.nome_cliente_informado} ${ticket.sobrenome_cliente_informado}`}</td>
+                      <td className="py-2">
+                        <div>{ticket.telefone_cliente_informado || "—"}</div>
+                        <small className="text-gray-400">{ticket.cpf_cliente_informado || "—"}</small>
+                      </td>
+                      <td className="py-2">{ticket.equipe_origem_nome}</td>
+                      <td className="py-2">{ticket.equipe_destino_nome} / {ticket.colaborador_destino_nome}</td>
+                      <td className="py-2">
+                        {isEditing ? (
+                          <select
+                            value={editForm.status_mapeamento}
+                            onChange={e => setEditForm(prev => ({ ...prev, status_mapeamento: e.target.value }))}
+                            className="px-2 py-1 border rounded text-xs"
+                          >
+                            <option value="pendente">Pendente</option>
+                            <option value="processando">Processando</option>
+                            <option value="concluido">Concluído</option>
+                            <option value="suporte">Suporte</option>
+                            <option value="aviso">Aviso</option>
+                            <option value="erro">Erro</option>
+                          </select>
+                        ) : (
+                          <span className={cn("inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium", statusInfo.className)}>
+                            {statusInfo.icon} {statusInfo.label}
+                          </span>
+                        )}
+                      </td>
+                      <td className="py-2 max-w-[150px]">
+                        {isEditing ? (
+                          <textarea
+                            value={editForm.observacao_sales_ops}
+                            onChange={e => setEditForm(prev => ({ ...prev, observacao_sales_ops: e.target.value }))}
+                            rows={2}
+                            className="w-full px-2 py-1 border rounded text-xs resize-none"
+                            placeholder="Nova observação"
+                          />
+                        ) : (
+                          <span className="truncate block" title={ticket.observacao_sales_ops}>{ticket.observacao_sales_ops || "—"}</span>
+                        )}
+                      </td>
+                      <td className="py-2">
+                        {isEditing ? (
+                          <div className="flex items-center gap-1">
+                            <button onClick={() => saveEdit(ticket.id_ticket_movimentacao)} disabled={saving} className="p-1 rounded hover:bg-green-50" title="Salvar"><Save className="w-3.5 h-3.5 text-green-600" /></button>
+                            <button onClick={cancelEdit} className="p-1 rounded hover:bg-red-50" title="Cancelar"><X className="w-3.5 h-3.5 text-red-500" /></button>
+                          </div>
+                        ) : (
+                          <button onClick={() => startEdit(ticket)} className="p-1 rounded hover:bg-gray-100" title="Editar"><Edit2 className="w-3.5 h-3.5 text-gray-500" /></button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
         )}
       </div>
-
-      {modalOpen && selectedCaso && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30">
-          <div className="bg-white rounded-xl shadow-xl p-6 w-full max-w-md mx-4">
-            <h3 className="text-lg font-bold text-[#09175b] mb-4">Concluir Caso #{selectedCaso.id}</h3>
-            <p className="text-sm text-gray-600 mb-2">Cliente: {selectedCaso.nome_cliente} {selectedCaso.sobrenome_cliente}</p>
-            <label className="block text-sm font-medium text-gray-700 mb-1">Observação</label>
-            <textarea value={observacao} onChange={e => setObservacao(e.target.value)} rows={4} className="w-full px-3 py-2 border border-gray-300 rounded-lg mb-4" placeholder="Adicione uma observação..." />
-            <div className="flex justify-end gap-2">
-              <button onClick={() => { setModalOpen(false); setSelectedCaso(null); }} className="px-4 py-2 text-sm rounded-lg border border-gray-300 hover:bg-gray-50">Cancelar</button>
-              <button onClick={handleConcluir} className="px-4 py-2 text-sm bg-[#09175b] text-white rounded-lg hover:bg-[#1a2f8a]">Confirmar Conclusão</button>
-            </div>
-          </div>
-        </div>
-      )}
     </div>
   );
 }

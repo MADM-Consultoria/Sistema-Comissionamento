@@ -1,487 +1,291 @@
 // routes/suporte.js
-const express = require('express');
+import express from 'express';
+import { pool } from '../services/db.js';
+
 const router = express.Router();
-const fetch = require('node-fetch');
-const teamsMovimentacao = require('../services/teams_movimentacao'); // notificador de movimentações
 
-// ==================== CONFIGURAÇÕES (variáveis de ambiente) ====================
-const KOMMO_DOMAIN = process.env.KOMMO_DOMAIN || 'madm';
-const KOMMO_API_TOKEN = process.env.KOMMO_API_TOKEN || '';
-const BASE_URL = `https://${KOMMO_DOMAIN}.kommo.com/api/v4`;
+const PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000';
 
-// Mapeamento assessor -> ID (opcional, pode ser usado para validação)
-const ASSESSORS_MAP = JSON.parse(process.env.ASSESSORS_MAP || '{}');
+// Mapeamento status_mapeamento → status do ticket de suporte
+const STATUS_MAP = {
+  pendente: 'Aberto',
+  processando: 'Em Andamento',
+  concluido: 'Concluído',
+  suporte: 'Aguardando Suporte',
+  aviso: 'Aviso',
+  erro: 'Erro',
+};
 
-// Pipeline padrão para onde os cards serão movidos/criados
-const DEFAULT_PIPELINE_ID = 12867279; // ex-CLOSER
-
-// IDs dos campos personalizados (substituir pelos reais)
-const CAMPO_TELEFONE_ID = 999999;   // TODO: substituir pelo ID real do campo TELEFONE
-const CAMPO_CPF_ID = 888888;        // TODO: substituir pelo ID real do campo CPF
-
-// ID do criador padrão (pode ser o mesmo do assessor de sistema)
-const CRIADOR_ID = 13273356;
-
-// Etapas bloqueadas (case insensitive) – não permitem movimentação
-const BLOCKED_STAGE_KEYWORDS = [
-  'Venda ganha', 'Venda perdida', 'Ganho', 'Perdido',
-  'Não tem interesse', 'Bloqueado', 'Cancelado', 'Desqualificado',
-  'Inválido', 'Duplicado'
-];
-
-// ==================== FUNÇÕES AUXILIARES ====================
-
-async function kommoRequest(endpoint, options = {}) {
-  const url = `${BASE_URL}${endpoint}`;
-  const config = {
-    method: options.method || 'GET',
-    headers: {
-      'Authorization': `Bearer ${KOMMO_API_TOKEN}`,
-      'Content-Type': 'application/json',
-      'Accept': 'application/json'
-    }
-  };
-  if (options.body) {
-    config.body = JSON.stringify(options.body);
-  }
-
-  const response = await fetch(url, config);
-  const text = await response.text();
-  if (!response.ok) throw new Error(`Kommo API error ${response.status}: ${text.substring(0, 200)}`);
-  if (!text) return {};
-  return JSON.parse(text);
-}
-
-async function buscarLeads(telefone, cpf) {
-  if (telefone) {
-    const limpo = telefone.replace(/\D/g, '');
-    const res = await kommoRequest(`/leads?query=${limpo}`);
-    return res._embedded?.leads || [];
-  }
-  if (cpf) {
-    const limpo = cpf.replace(/\D/g, '');
-    let res = await kommoRequest(`/leads?query=${limpo}`);
-    let leads = res._embedded?.leads || [];
-    if (!leads.length) {
-      res = await kommoRequest(`/leads?query=${encodeURIComponent(cpf)}`);
-      leads = res._embedded?.leads || [];
-    }
-    return leads;
-  }
-  return [];
-}
-
-async function buscarInfoLead(leadId) {
-  const lead = await kommoRequest(`/leads/${leadId}`);
-  const pipelines = await kommoRequest('/leads/pipelines');
-  const pipeline = pipelines._embedded?.pipelines?.find(p => p.id === lead.pipeline_id);
-  const etapas = await kommoRequest(`/leads/pipelines/${pipeline.id}/statuses`);
-  const etapa = etapas._embedded?.statuses?.find(s => s.id === lead.status_id);
-
-  return {
-    lead: {
-      id: lead.id,
-      nome: lead.name,
-      pipeline_id: lead.pipeline_id,
-      pipeline_nome: pipeline?.name || 'Desconhecido',
-      status_id: lead.status_id,
-      etapa_nome: etapa?.name || 'Desconhecida',
-      responsible_user_id: lead.responsible_user_id
-    }
-  };
-}
-
-function isMovable(etapaNome) {
-  if (!etapaNome) return false;
-  const etapa = etapaNome.toLowerCase();
-  return !BLOCKED_STAGE_KEYWORDS.some(keyword => etapa.includes(keyword.toLowerCase()));
-}
-
-async function validarContato(leadId, telefone, cpf) {
-  const leadComContatos = await kommoRequest(`/leads/${leadId}?with=contacts`);
-  const contatos = leadComContatos._embedded?.contacts;
-  if (!contatos?.length) return { valido: true };
-
-  const contato = await kommoRequest(`/contacts/${contatos[0].id}`);
-  const telefones = (contato.custom_fields_values || [])
-    .filter(cf => cf.field_name?.toLowerCase().includes('telefone'))
-    .flatMap(cf => cf.values.map(v => v.value))
-    .filter(Boolean);
-  const cpfs = (contato.custom_fields_values || [])
-    .filter(cf => cf.field_name?.toLowerCase().includes('cpf'))
-    .flatMap(cf => cf.values.map(v => v.value))
-    .filter(Boolean);
-
-  if (telefone && telefones.length) {
-    const limpo = telefone.replace(/\D/g, '');
-    const corresponde = telefones.some(t => t.replace(/\D/g, '').includes(limpo));
-    if (!corresponde) {
-      return { valido: false, tipo: 'telefone_inconsistente', motivo: 'Telefone não corresponde' };
-    }
-  }
-  if (cpf && cpfs.length) {
-    const limpo = cpf.replace(/\D/g, '');
-    const corresponde = cpfs.some(c => c.replace(/\D/g, '').includes(limpo));
-    if (!corresponde) {
-      return { valido: false, tipo: 'cpf_inconsistente', motivo: 'CPF não corresponde' };
-    }
-  }
-  return { valido: true };
-}
-
-async function criarContato(nome, telefone, cpf, assessorId) {
-  const body = {
-    name: nome,
-    responsible_user_id: parseInt(assessorId),
-    created_by: CRIADOR_ID,
-    updated_by: CRIADOR_ID
-  };
-
-  if (telefone) {
-    body.custom_fields_values = [{
-      field_id: CAMPO_TELEFONE_ID,
-      values: [{ value: telefone, enum_code: 'WORK' }]
-    }];
-  }
-  if (cpf) {
-    body.custom_fields_values = body.custom_fields_values || [];
-    body.custom_fields_values.push({
-      field_id: CAMPO_CPF_ID,
-      values: [{ value: cpf }]
-    });
-  }
-
-  const res = await kommoRequest('/contacts', { method: 'POST', body: [body] });
-  if (!res._embedded?.contacts?.[0]?.id) throw new Error('Falha ao criar contato');
-  return res._embedded.contacts[0].id;
-}
-
-async function criarLeadComContato(nomeCliente, contatoId, assessorId) {
-  const etapas = await kommoRequest(`/leads/pipelines/${DEFAULT_PIPELINE_ID}/statuses`);
-  const etapa = etapas._embedded?.statuses?.find(e =>
-    e.name?.toUpperCase().includes('RECEBIDOS') || e.name?.toUpperCase().includes('NOVO')
-  ) || etapas._embedded?.statuses?.[0];
-  if (!etapa) throw new Error('Etapa inicial não encontrada');
-
-  const body = {
-    name: nomeCliente || `Lead ${new Date().toLocaleDateString('pt-BR')}`,
-    pipeline_id: DEFAULT_PIPELINE_ID,
-    status_id: etapa.id,
-    responsible_user_id: parseInt(assessorId),
-    created_by: CRIADOR_ID,
-    updated_by: CRIADOR_ID,
-    _embedded: { contacts: [{ id: contatoId, is_main: true }] }
-  };
-
-  const res = await kommoRequest('/leads', { method: 'POST', body: [body] });
-  if (!res._embedded?.leads?.[0]?.id) throw new Error('Falha ao criar lead');
-  return res._embedded.leads[0].id;
-}
-
-async function movimentarParaPipeline(leadId, assessorId) {
-  const etapas = await kommoRequest(`/leads/pipelines/${DEFAULT_PIPELINE_ID}/statuses`);
-  const etapa = etapas._embedded?.statuses?.find(e =>
-    e.name?.toUpperCase().includes('RECEBIDOS') || e.name?.toUpperCase().includes('NOVO')
-  ) || etapas._embedded?.statuses?.[0];
-  if (!etapa) throw new Error('Etapa do pipeline padrão não encontrada');
-
-  await kommoRequest(`/leads/${leadId}`, {
-    method: 'PATCH',
-    body: {
-      pipeline_id: DEFAULT_PIPELINE_ID,
-      status_id: etapa.id,
-      responsible_user_id: parseInt(assessorId),
-      updated_by: CRIADOR_ID
-    }
-  });
-
-  // Atualiza responsável do contato principal
-  const leadComContatos = await kommoRequest(`/leads/${leadId}?with=contacts`);
-  const contatos = leadComContatos._embedded?.contacts;
-  if (contatos?.length) {
-    await kommoRequest(`/contacts/${contatos[0].id}`, {
-      method: 'PATCH',
-      body: { responsible_user_id: parseInt(assessorId), updated_by: CRIADOR_ID }
-    }).catch(() => {});
-  }
-}
-
-// ==================== ROTAS ====================
-
-// POST /api/suporte/movimentar
-router.post('/movimentar', async (req, res) => {
+// ==================== REGISTO DE TICKET DE MOVIMENTAÇÃO ====================
+router.post('/ticket-movimentacao', async (req, res) => {
   try {
     const {
-      firstName,
-      lastName,
-      email,
-      telefone,
-      cpf,
-      origem,
-      assessorId,
-      usuario,
+      crm_origem = 'CRM',
+      crm_lead_id: rawCrmLeadId = null,
+      nome_cliente_informado,
+      sobrenome_cliente_informado,
+      email_cliente_informado,
+      telefone_cliente_informado,
+      cpf_cliente_informado,
+      origem_cliente_informada,
+      tipo_solicitacao = 'Movimentação',
+      colaborador_origem_nome,
+      equipe_origem_nome,
+      colaborador_destino_nome,
+      equipe_destino_nome,
+      motivo_solicitacao: rawMotivo = null,
+      observacao_sales_ops: rawObs = null,
+      status_mapeamento = 'pendente',
     } = req.body;
 
-    if (!firstName || !lastName || !assessorId) {
-      return res.status(400).json({
-        success: false,
-        status: 'dados_invalidos',
-        message: 'Nome, sobrenome e assessorId são obrigatórios',
-      });
+    if (!nome_cliente_informado || !sobrenome_cliente_informado || !email_cliente_informado) {
+      return res.status(400).json({ success: false, error: 'Nome, sobrenome e e‑mail são obrigatórios.' });
     }
 
-    const nomeCompleto = `${firstName.trim()} ${lastName.trim()}`;
-    const leads = await buscarLeads(telefone, cpf);
-    let leadId = null;
-    let acao = '';
+    const toNull = (val) => (val === 'null' || val === null || val === undefined ? null : val);
+    const crmLeadId = toNull(rawCrmLeadId);
+    const observacao = toNull(rawObs);
 
-    // ---------------------------------------------
-    // Nenhum lead encontrado → cria novo
-    // ---------------------------------------------
-    if (leads.length === 0) {
-      if (!telefone && !cpf) {
-        return res.json({
-          success: false,
-          status: 'telefone_obrigatorio',
-          message: 'Nenhum lead encontrado. Informe telefone ou CPF para criar um novo.',
-        });
-      }
-      const contatoId = await criarContato(nomeCompleto, telefone, cpf, assessorId);
-      leadId = await criarLeadComContato(nomeCompleto, contatoId, assessorId);
-      acao = 'novo_lead_criado';
-    }
-    // ---------------------------------------------
-    // Um lead encontrado
-    // ---------------------------------------------
-    else if (leads.length === 1) {
-      leadId = leads[0].id;
+    let motivoSolicitacao = toNull(rawMotivo);
+    if (motivoSolicitacao === null) motivoSolicitacao = '';
 
-      // Valida telefone/CPF
-      const validacao = await validarContato(leadId, telefone, cpf);
-      if (!validacao.valido) {
-        await teamsMovimentacao.enviar({
-          tipo: validacao.tipo.toUpperCase(),
-          usuario,
-          leadId,
-          leadNome: leads[0].name,
-          motivo: validacao.motivo,
-          detalhes: 'Inconsistência nos dados de contato'
-        });
-        return res.json({
-          success: false,
-          status: 'aviso',
-          tipoSuporte: validacao.tipo.toUpperCase(),
-          message: validacao.motivo + ' - Notificação enviada ao suporte',
-          leadId,
-        });
-      }
+    const cpfNumerico = cpf_cliente_informado ? cpf_cliente_informado.replace(/\D/g, '') : null;
+    const cpfFinal = cpfNumerico && cpfNumerico.length > 11 ? cpfNumerico.substring(0, 11) : cpfNumerico;
 
-      // Verifica se o lead está em etapa bloqueada
-      const info = await buscarInfoLead(leadId);
-      if (!isMovable(info.lead.etapa_nome)) {
-        // Etapa bloqueada → cria novo lead em vez de mover
-        if (!telefone && !cpf) {
-          return res.json({
-            success: false,
-            status: 'telefone_obrigatorio',
-            message: 'Lead existente em etapa bloqueada. Informe telefone/CPF para criar novo.',
-          });
-        }
-        const contatoId = await criarContato(nomeCompleto, telefone, cpf, assessorId);
-        leadId = await criarLeadComContato(nomeCompleto, contatoId, assessorId);
-        acao = 'novo_lead_criado_etapa_bloqueada';
-      } else {
-        // Movimenta normalmente
-        await movimentarParaPipeline(leadId, assessorId);
-        acao = 'movimentado';
-      }
-    }
-    // ---------------------------------------------
-    // Múltiplos leads → suporte
-    // ---------------------------------------------
-    else {
-      await teamsMovimentacao.enviar({
-        tipo: 'MULTIPLOS_CARDS',
-        usuario,
-        totalLeads: leads.length,
-        motivo: `${leads.length} leads encontrados com os mesmos dados`,
-        detalhes: 'Necessário verificar manualmente'
-      });
-      return res.json({
-        success: false,
-        status: 'suporte',
-        tipoSuporte: 'MULTIPLOS_CARDS',
-        message: `${leads.length} leads encontrados. Verificação manual necessária.`,
-      });
-    }
+    const descricao = `Cliente: ${nome_cliente_informado} ${sobrenome_cliente_informado} | E‑mail: ${email_cliente_informado} | Origem: ${origem_cliente_informada || 'N/A'} | Destino: ${colaborador_destino_nome} (${equipe_destino_nome})`;
 
-    return res.json({
-      success: true,
-      status: 'concluido',
-      message: acao === 'novo_lead_criado' ? 'Novo lead criado e atribuído ao assessor.' : 'Lead movimentado com sucesso.',
-      leadId,
-      acao,
-      usuario,
-      nomeCliente: nomeCompleto
+    const baseResult = await pool.query(
+      `INSERT INTO app_comissionamento.tickets_suporte 
+         (solicitante_usuario_id, categoria, tipo_ticket, prioridade, status, titulo, descricao, origem_ticket, criado_em, atualizado_em)
+       VALUES ($1, 'Movimentacao', 'Movimentacao', 'AUTO', 'Aberto', 'movimentacao card', $2, 'suporte comissionamento', NOW(), NOW())
+       RETURNING id_ticket`,
+      [PLACEHOLDER_UUID, descricao]
+    );
+    const ticketId = baseResult.rows[0].id_ticket;
+
+    const safe = {
+      ticket_id:                    ticketId,
+      crm_origem:                   crm_origem,
+      crm_lead_id:                  crmLeadId,
+      nome_cliente_informado:       nome_cliente_informado,
+      sobrenome_cliente_informado:  sobrenome_cliente_informado,
+      email_cliente_informado:      email_cliente_informado,
+      telefone_cliente_informado:   telefone_cliente_informado,
+      cpf_cliente_informado:        cpfFinal,
+      origem_cliente_informada:     origem_cliente_informada,
+      tipo_solicitacao:             tipo_solicitacao,
+      colaborador_origem_nome:      colaborador_origem_nome,
+      equipe_origem_nome:           equipe_origem_nome,
+      colaborador_destino_nome:     colaborador_destino_nome,
+      equipe_destino_nome:          equipe_destino_nome,
+      motivo_solicitacao:           motivoSolicitacao,
+      observacao_sales_ops:         observacao,
+      status_mapeamento:            status_mapeamento,
+    };
+
+    console.log('📦 Dados finais para inserção:');
+    Object.entries(safe).forEach(([key, value]) => {
+      console.log(`   ${key}: "${value}" (${value ? String(value).length : 0} caracteres)`);
     });
-
-  } catch (error) {
-    console.error('Erro em /movimentar:', error);
-    await teamsMovimentacao.enviar({
-      tipo: 'ERRO_PROCESSAMENTO',
-      usuario: req.body.usuario || 'frontend',
-      error: error.message,
-      detalhes: `Stack: ${error.stack?.substring(0, 500)}`
-    });
-    return res.status(500).json({
-      success: false,
-      status: 'erro_interno',
-      message: error.message,
-    });
-  }
-});
-
-// POST /api/suporte/registrar-movimentacao (persistência no banco)
-router.post('/registrar-movimentacao', async (req, res) => {
-  try {
-    const {
-      Solicitante,
-      Nome_Cliente,
-      Sobrenome_Cliente,
-      Email_Cliente,
-      Numero_Cliente,
-      CPF_Cliente,
-      Origem_Cliente,
-      Nome_Colaborador,
-      Equipe_Colaborador,
-      Status,
-    } = req.body;
-
-    if (!Solicitante || !Nome_Cliente || !Sobrenome_Cliente || !Email_Cliente) {
-      return res.status(400).json({
-        success: false,
-        message: 'Campos obrigatórios ausentes (Solicitante, Nome, Sobrenome, E-mail)',
-      });
-    }
-
-    const db = req.app.get('db');
-    if (!db) {
-      return res.status(500).json({
-        success: false,
-        message: 'Conexão com o banco de dados não disponível',
-      });
-    }
 
     const query = `
-      INSERT INTO app_comissionamento."Movimentacao_Lead" (
-        "Solicitante",
-        "Data_Encaminhada",
-        "Status",
-        "Nome_Cliente",
-        "Sobrenome_Cliente",
-        "Email_Cliente",
-        "Numero_Cliente",
-        "CPF_Cliente",
-        "Origem_Cliente",
-        "Nome_Colaborador",
-        "Equipe_Colaborador"
-      ) VALUES ($1, CURRENT_DATE, $2, $3, $4, $5, $6, $7, $8, $9, $10)
-      RETURNING "ID_Caso_Movi"
+      INSERT INTO app_comissionamento.tickets_movimentacao_lead (
+        ticket_id,
+        crm_origem, crm_lead_id,
+        nome_cliente_informado, sobrenome_cliente_informado,
+        email_cliente_informado, telefone_cliente_informado,
+        cpf_cliente_informado, origem_cliente_informada,
+        tipo_solicitacao,
+        colaborador_origem_nome, equipe_origem_nome,
+        colaborador_destino_nome, equipe_destino_nome,
+        motivo_solicitacao, observacao_sales_ops,
+        status_mapeamento, criado_em, atualizado_em
+      ) VALUES (
+        $1, $2, $3, $4, $5, $6, $7, $8, $9,
+        $10, $11, $12, $13, $14, $15, $16, $17,
+        NOW(), NOW()
+      )
+      RETURNING id_ticket_movimentacao
     `;
 
     const values = [
-      Solicitante,
-      Status || 'Registrado',
-      Nome_Cliente,
-      Sobrenome_Cliente,
-      Email_Cliente || null,
-      Numero_Cliente || null,
-      CPF_Cliente || null,
-      Origem_Cliente || null,
-      Nome_Colaborador || null,
-      Equipe_Colaborador || null,
+      safe.ticket_id,
+      safe.crm_origem, safe.crm_lead_id,
+      safe.nome_cliente_informado, safe.sobrenome_cliente_informado,
+      safe.email_cliente_informado, safe.telefone_cliente_informado || null,
+      safe.cpf_cliente_informado || null, safe.origem_cliente_informada,
+      safe.tipo_solicitacao,
+      safe.colaborador_origem_nome || req.session?.userId || 'frontend',
+      safe.equipe_origem_nome || '',
+      safe.colaborador_destino_nome, safe.equipe_destino_nome,
+      safe.motivo_solicitacao, safe.observacao_sales_ops,
+      safe.status_mapeamento,
     ];
 
-    const result = await db.query(query, values);
-    const idCaso = result.rows[0].ID_Caso_Movi;
+    const result = await pool.query(query, values);
+    return res.status(201).json({
+      success: true,
+      message: 'Ticket de movimentação registrado com sucesso.',
+      id: result.rows[0].id_ticket_movimentacao,
+    });
+  } catch (err) {
+    console.error('Erro ao registrar ticket:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
+  }
+});
+
+// ==================== REGISTO DE TICKET DE SUPORTE (REPORTAR) ====================
+router.post('/ticket-suporte', async (req, res) => {
+  try {
+    const {
+      assunto,
+      descricao,
+      files = [],
+    } = req.body;
+
+    if (!assunto || !descricao) {
+      return res.status(400).json({ success: false, error: 'Assunto e descrição são obrigatórios.' });
+    }
+
+    const metadados = files.length > 0 ? { arquivos: files } : null;
+
+    const result = await pool.query(
+      `INSERT INTO app_comissionamento.tickets_suporte 
+         (solicitante_usuario_id, categoria, tipo_ticket, prioridade, status, titulo, descricao, origem_ticket, metadados, criado_em, atualizado_em)
+       VALUES ($1, $2, $3, NULL, 'Aberto', $4, $5, 'suporte comissionamento', $6, NOW(), NOW())
+       RETURNING id_ticket`,
+      [
+        PLACEHOLDER_UUID,
+        'Reporte',
+        'Reporte',
+        assunto,
+        descricao,
+        metadados ? JSON.stringify(metadados) : null,
+      ]
+    );
 
     return res.status(201).json({
       success: true,
-      message: 'Movimentação registrada com sucesso',
-      ID_Caso_Movi: idCaso,
+      message: 'Ticket de suporte registado com sucesso.',
+      id_ticket: result.rows[0].id_ticket,
     });
-
-  } catch (error) {
-    console.error('Erro ao registrar movimentação no banco:', error);
-    return res.status(500).json({
-      success: false,
-      message: error.message,
-    });
+  } catch (err) {
+    console.error('Erro ao registar ticket de suporte:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
-// ==================== NOVAS ROTAS - VISÃO SALESOPS ====================
-
-// GET /api/suporte/casos
-router.get('/casos', async (req, res) => {
+// ==================== LISTAGEM DE TICKETS ====================
+router.get('/tickets-movimentacao', async (req, res) => {
   try {
-    const db = req.app.get('db');
-    if (!db) {
-      return res.status(500).json({ success: false, message: 'Banco não disponível' });
+    const { status_mapeamento, colaborador_origem_nome, todos } = req.query;
+    let query = `
+      SELECT id_ticket_movimentacao, ticket_id, crm_origem, tipo_solicitacao,
+             nome_cliente_informado, sobrenome_cliente_informado,
+             email_cliente_informado, telefone_cliente_informado,
+             cpf_cliente_informado, origem_cliente_informada,
+             colaborador_origem_nome, equipe_origem_nome,
+             colaborador_destino_nome, equipe_destino_nome,
+             status_mapeamento, observacao_sales_ops, criado_em
+      FROM app_comissionamento.tickets_movimentacao_lead
+      WHERE 1=1
+    `;
+    const params = [];
+    let paramIndex = 1;
+
+    if (status_mapeamento) {
+      query += ` AND status_mapeamento = $${paramIndex++}`;
+      params.push(status_mapeamento);
+    }
+    if (!todos || todos !== '1') {
+      if (colaborador_origem_nome) {
+        query += ` AND LOWER(TRIM(colaborador_origem_nome)) = LOWER(TRIM($${paramIndex++}))`;
+        params.push(colaborador_origem_nome);
+      }
     }
 
-    const result = await db.query(`
-      SELECT 
-        "ID_Caso_Movi" AS id,
-        "Solicitante" AS solicitante,
-        "Data_Encaminhada" AS data_encaminhada,
-        "Status" AS status,
-        "Data_Conclusão" AS data_conclusao,
-        "Nome_Cliente" AS nome_cliente,
-        "Sobrenome_Cliente" AS sobrenome_cliente,
-        "Email_Cliente" AS email_cliente,
-        "Numero_Cliente" AS numero_cliente,
-        "CPF_Cliente" AS cpf_cliente,
-        "Origem_Cliente" AS origem_cliente,
-        "Nome_Colaborador" AS nome_colaborador,
-        "Equipe_Colaborador" AS equipe_colaborador,
-        "Observacao" AS observacao
-      FROM app_comissionamento."Movimentacao_Lead"
-      ORDER BY "Data_Encaminhada" DESC
-    `);
+    query += ' ORDER BY criado_em DESC';
 
+    const result = await pool.query(query, params);
     return res.json({ success: true, data: result.rows });
-  } catch (error) {
-    console.error('Erro ao buscar casos:', error);
-    return res.status(500).json({ success: false, message: error.message });
+  } catch (err) {
+    console.error('Erro ao listar tickets:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
-// PATCH /api/suporte/caso/:id
-router.patch('/caso/:id', async (req, res) => {
+// ==================== ATUALIZAÇÃO DE TICKET (PATCH) ====================
+router.patch('/tickets-movimentacao/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    const { observacao } = req.body;
+    const { status_mapeamento, observacao_sales_ops } = req.body;
 
-    const db = req.app.get('db');
-    if (!db) {
-      return res.status(500).json({ success: false, message: 'Banco não disponível' });
+    if (!status_mapeamento && observacao_sales_ops === undefined) {
+      return res.status(400).json({ success: false, error: 'Nenhum campo para atualizar.' });
     }
 
-    await db.query(`
-      UPDATE app_comissionamento."Movimentacao_Lead"
-      SET 
-        "Status" = 'Concluído',
-        "Data_Conclusão" = CURRENT_DATE,
-        "Observacao" = $1
-      WHERE "ID_Caso_Movi" = $2
-    `, [observacao || '', id]);
+    // === 1. Atualiza a tabela de movimentação ===
+    const setClauses = [];
+    const values = [];
+    let paramIndex = 1;
 
-    return res.json({ success: true, message: 'Caso concluído' });
-  } catch (error) {
-    console.error('Erro ao atualizar caso:', error);
-    return res.status(500).json({ success: false, message: error.message });
+    if (status_mapeamento) {
+      setClauses.push(`status_mapeamento = $${paramIndex++}`);
+      values.push(status_mapeamento);
+    }
+    if (observacao_sales_ops !== undefined) {
+      setClauses.push(`observacao_sales_ops = $${paramIndex++}`);
+      values.push(observacao_sales_ops);
+    }
+
+    // Auditoria
+    setClauses.push(`analisado_por_usuario_id = $${paramIndex++}`);
+    values.push(PLACEHOLDER_UUID);
+    setClauses.push(`analisado_em = NOW()`);
+    setClauses.push(`atualizado_em = NOW()`);
+
+    const updateMovimentacaoQuery = `
+      UPDATE app_comissionamento.tickets_movimentacao_lead
+      SET ${setClauses.join(', ')}
+      WHERE id_ticket_movimentacao = $${paramIndex}
+      RETURNING ticket_id
+    `;
+    values.push(id);
+
+    const movResult = await pool.query(updateMovimentacaoQuery, values);
+    if (movResult.rowCount === 0) {
+      return res.status(404).json({ success: false, error: 'Ticket de movimentação não encontrado.' });
+    }
+
+    const ticketId = movResult.rows[0].ticket_id;
+
+    // === 2. Atualiza o ticket base (tickets_suporte) ===
+    if (status_mapeamento) {
+      const statusSuporte = STATUS_MAP[status_mapeamento] || 'Aberto';
+      await pool.query(
+        `UPDATE app_comissionamento.tickets_suporte 
+         SET status = $1, atualizado_em = NOW()
+         WHERE id_ticket = $2`,
+        [statusSuporte, ticketId]
+      );
+    }
+
+    // Se foi fornecida observação, acrescenta à descrição do ticket de suporte
+    if (observacao_sales_ops && observacao_sales_ops.trim() !== '') {
+      await pool.query(
+        `UPDATE app_comissionamento.tickets_suporte 
+         SET descricao = descricao || ' | Observação (' || to_char(NOW(), 'DD/MM/YYYY HH24:MI') || '): ' || $1,
+             atualizado_em = NOW()
+         WHERE id_ticket = $2`,
+        [observacao_sales_ops, ticketId]
+      );
+    }
+
+    return res.json({ success: true, message: 'Ticket atualizado com sucesso (movimentação e ticket base).' });
+  } catch (err) {
+    console.error('Erro ao atualizar ticket:', err);
+    return res.status(500).json({ success: false, error: 'Erro interno do servidor.' });
   }
 });
 
-module.exports = router;
+export default router;
