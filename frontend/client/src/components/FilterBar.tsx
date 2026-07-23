@@ -146,7 +146,7 @@ export default function FilterBar({
 
     if (isAssessor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
-      if (currentUser.nome) setSelectedColaborador(currentUser.nome);  // ✅ nome em vez de name
+      if (currentUser.nome) setSelectedColaborador(currentUser.nome);
     } else if (isSupervisor) {
       if (currentUser.equipe) setSelectedEquipe(currentUser.equipe);
       setSelectedColaborador("todos");
@@ -191,7 +191,6 @@ export default function FilterBar({
       filtered = filtered.filter((c) => normalize(c.equipeNome) === normalize(effectiveEquipe));
     }
 
-    // 🔁 Comparação pelo e‑mail, não mais por id
     if (isAssessor && currentUser) {
       filtered = filtered.filter((c) => c.email === currentUser.e_mail);
     }
@@ -205,20 +204,8 @@ export default function FilterBar({
     return filtered;
   }, [collaborators, selectedEquipe, isAssessor, isSupervisor, currentUser, searchTerm, isReady]);
 
-  // ========== AJUSTA EQUIPE QUANDO COLABORADOR SELECIONADO ==========
-  useEffect(() => {
-    if (!isReady) return;
-    if (selectedColaborador === "todos" || !collaborators.length) return;
-    if (isAssessor || isSupervisor) return;
-
-    const colab = collaborators.find(c => c.name === selectedColaborador);
-    if (colab && colab.equipeNome) {
-      const equipeDoColab = colab.equipeNome;
-      if (selectedEquipe !== equipeDoColab && equipesDisponiveis.includes(equipeDoColab)) {
-        setSelectedEquipe(equipeDoColab);
-      }
-    }
-  }, [selectedColaborador, collaborators, isAssessor, isSupervisor, selectedEquipe, equipesDisponiveis, isReady]);
+  // ❌ REMOVIDO: useEffect que alterava equipe ao selecionar colaborador
+  // (mantém o filtro de equipe sempre onde o usuário escolheu, inclusive "todas")
 
   // ========== NOTIFICAR O PARENT ==========
   const onFilterChangeRef = useRef(onFilterChange);
@@ -233,7 +220,7 @@ export default function FilterBar({
     let finalColaborador = selectedColaborador;
     if (isAssessor && currentUser) {
       finalEquipe = currentUser.equipe || "todas";
-      finalColaborador = currentUser.nome || "todos";  // ✅ nome
+      finalColaborador = currentUser.nome || "todos";
     } else if (isSupervisor && currentUser) {
       finalEquipe = currentUser.equipe || "todas";
       finalColaborador = selectedColaborador;
