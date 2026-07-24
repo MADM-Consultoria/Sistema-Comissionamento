@@ -44,6 +44,7 @@ export interface BonusData { active: boolean; label: string; description: string
 export interface WeeklyPerformance { day: string; vendas: number; meta: number; }
 export interface DailyProduction { date: string; vendas: number; leads: number; }
 export interface User {
+  id: number; 
   e_mail: string;
   nome: string;
   email: string;
@@ -356,6 +357,7 @@ export const useAppStore = create<AppStore>()(
           return;
         }
         const normalized: User = {
+          id: user.id || 0,
           e_mail: user.e_mail || '',
           nome: user.nome || '',
           email: user.email || user.e_mail || '',

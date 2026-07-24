@@ -1,12 +1,12 @@
 // routes/suporte.js
 import express from 'express';
 import { pool } from '../services/db.js';
+import { searchContact, createContact } from '../services/hubspot.js';
 
 const router = express.Router();
 
 const PLACEHOLDER_UUID = '00000000-0000-0000-0000-000000000000';
 
-// Mapeamento status_mapeamento → status do ticket de suporte
 const STATUS_MAP = {
   pendente: 'Aberto',
   processando: 'Em Andamento',
@@ -54,6 +54,7 @@ router.post('/ticket-movimentacao', async (req, res) => {
 
     const descricao = `Cliente: ${nome_cliente_informado} ${sobrenome_cliente_informado} | E‑mail: ${email_cliente_informado} | Origem: ${origem_cliente_informada || 'N/A'} | Destino: ${colaborador_destino_nome} (${equipe_destino_nome})`;
 
+    // 1. Criar ticket base na tabela tickets_suporte
     const baseResult = await pool.query(
       `INSERT INTO app_comissionamento.tickets_suporte 
          (solicitante_usuario_id, categoria, tipo_ticket, prioridade, status, titulo, descricao, origem_ticket, criado_em, atualizado_em)
@@ -63,6 +64,7 @@ router.post('/ticket-movimentacao', async (req, res) => {
     );
     const ticketId = baseResult.rows[0].id_ticket;
 
+    // 2. Inserir na tabela de movimentação
     const safe = {
       ticket_id:                    ticketId,
       crm_origem:                   crm_origem,
@@ -123,6 +125,34 @@ router.post('/ticket-movimentacao', async (req, res) => {
     ];
 
     const result = await pool.query(query, values);
+
+    // ========== INTEGRAÇÃO COM HUBSPOT (em background) ==========
+    // Não bloqueia a resposta ao utilizador; apenas loga o resultado.
+    (async () => {
+      try {
+        let contact = await searchContact({
+          email: email_cliente_informado,
+          phone: telefone_cliente_informado,
+          cpf: cpf_cliente_informado,
+        });
+
+        if (!contact) {
+          contact = await createContact({
+            firstName: nome_cliente_informado,
+            lastName: sobrenome_cliente_informado,
+            email: email_cliente_informado,
+            phone: telefone_cliente_informado,
+            cpf: cpf_cliente_informado,
+          });
+          console.log('✅ HubSpot: contacto criado com ID', contact.id);
+        } else {
+          console.log('ℹ️ HubSpot: contacto já existe (ID', contact.id, ')');
+        }
+      } catch (hubspotError) {
+        console.error('❌ HubSpot: erro na integração:', hubspotError.message);
+      }
+    })();
+
     return res.status(201).json({
       success: true,
       message: 'Ticket de movimentação registrado com sucesso.',
@@ -270,7 +300,6 @@ router.patch('/tickets-movimentacao/:id', async (req, res) => {
       );
     }
 
-    // Se foi fornecida observação, acrescenta à descrição do ticket de suporte
     if (observacao_sales_ops && observacao_sales_ops.trim() !== '') {
       await pool.query(
         `UPDATE app_comissionamento.tickets_suporte 
