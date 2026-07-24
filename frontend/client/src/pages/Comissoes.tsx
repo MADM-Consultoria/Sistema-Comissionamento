@@ -243,21 +243,6 @@ export default function Comissoes() {
     reloadData(false);
   }, [currentStartDate, currentEndDate, filters, reloadData, isFirstFilterApplied, loading]);
 
-  // ========== POLLING A CADA 5 MINUTOS ==========
-  useEffect(() => {
-    if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
-
-    const refresh = async () => {
-      if (refreshing) return;
-      if (document.visibilityState === 'visible') {
-        await reloadData(true);
-      }
-    };
-
-    const intervalId = setInterval(refresh, 300000);
-    return () => clearInterval(intervalId);
-  }, [currentStartDate, currentEndDate, reloadData, refreshing]);
-
   // ========== DADOS FILTRADOS E CÁLCULOS ==========
   const filteredColabs = useMemo(() => {
     let filtered = storeColabs.filter(c => {

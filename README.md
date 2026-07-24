@@ -99,6 +99,10 @@ Exemplo:
 
     Nivel de acesso (hierarquia para tabela core) - cargo 
        
+-------------------------------------------------------------------------------------------
+
+Mudança para views:
+
             Nivel          |                Grupo
 ---------------------------|-------------------------------------------------------------
     Desc                   | status = desativado
@@ -113,3 +117,4 @@ Exemplo:
                            |
     Administrativo         | Salesops, CEO, Analista de CRM,Desenvolvedor,Diretora,
                            | Analista de dados, Desenvolvedor Make
+                           

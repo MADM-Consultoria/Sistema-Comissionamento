@@ -332,21 +332,6 @@ export default function Analytics() {
     load();
   }, [currentStartDate, currentEndDate, filters, reloadData, loading, isFirstFilterApplied]);
 
-  // ========== POLLING A CADA 5 MINUTOS ==========
-  useEffect(() => {
-    if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
-
-    const refresh = async () => {
-      if (refreshing) return;
-      if (document.visibilityState === 'visible') {
-        await reloadData(true);
-      }
-    };
-
-    const intervalId = setInterval(refresh, 300000);
-    return () => clearInterval(intervalId);
-  }, [currentStartDate, currentEndDate, reloadData, refreshing]);
-
   // ========== HANDLER DO FILTERBAR ==========
   const handleFilterChange = (newFilters: any) => {
     setFilters(newFilters);
