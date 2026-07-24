@@ -515,21 +515,6 @@ export default function Home() {
     reloadData(false);
   }, [currentStartDate, currentEndDate, filters, reloadData]);
 
-  // ========== POLLING A CADA 5 MINUTOS ==========
-  useEffect(() => {
-    if (!initialLoadDone.current || !currentStartDate || !currentEndDate) return;
-
-    const refresh = async () => {
-      if (refreshing) return;
-      if (document.visibilityState === 'visible') {
-        await reloadData(true);
-      }
-    };
-
-    const intervalId = setInterval(refresh, 300000);
-    return () => clearInterval(intervalId);
-  }, [currentStartDate, currentEndDate, reloadData, refreshing]);
-
   // Carrega ranking inicial se necessário
   useEffect(() => {
     if (currentStartDate && currentEndDate && allCollaborators.length === 0) {
@@ -806,7 +791,7 @@ export default function Home() {
   };
 
   const hasActiveFilters = filters.equipe !== "todas" || filters.colaborador !== "todos" || filters.produto !== "Todos";
-  const firstName = currentUser?.name?.split(" ")[0] || "Usuário";
+  const firstName = currentUser?.nome?.split(" ")[0] || "Usuário";
 
   const stats = useMemo(() => {
     if (isSpecialGroup || weeklyDetailed.length === 0) {
