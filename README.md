@@ -97,3 +97,19 @@ Exemplo:
 
     Para um dia único: meta diária = 3 × 1 = 3; meta semanal = 15 × 0.14 ≈ 2; meta mensal = 60 × 0.03 ≈ 2.
 
+    Nivel de acesso (hierarquia para tabela core) - cargo 
+       
+            Nivel          |                Grupo
+---------------------------|-------------------------------------------------------------
+    Desc                   | status = desativado
+                           | cargo = Assistente,Analista Juridico,Gestor de projetos
+                           | Analista, Analista Juridico, Analista de discadora
+                           |
+    Assessor               | Assessor, Analista de pastas
+                           |
+    Supervisão             | Supervisor
+                           |
+    Coordenador            | Coordenador
+                           |
+    Administrativo         | Salesops, CEO, Analista de CRM,Desenvolvedor,Diretora,
+                           | Analista de dados, Desenvolvedor Make

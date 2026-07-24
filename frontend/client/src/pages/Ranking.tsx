@@ -396,7 +396,7 @@ export default function Ranking() {
         ganhos: metrics.ganhos || 0,
         avatar: colab.avatar || colab.name.charAt(0).toUpperCase(),
         trend: "same" as const,
-        isCurrentUser: colab.id === currentUser?.id || colab.name === currentUser?.name,
+        isCurrentUser: colab.id === currentUser?.id || colab.name === currentUser?.nome,
         equipe: colab.equipeNome,
       };
       const score = calculateWeightedScore(base, activeSortMetrics);
@@ -462,7 +462,7 @@ export default function Ranking() {
     return teamRanking.find((team) => team.name === currentUser.equipe);
   }, [rankingType, teamRanking, currentUser]);
 
-  const currentUserData = allCollaborators.find(c => c.id === currentUser?.id || c.name === currentUser?.name);
+  const currentUserData = allCollaborators.find(c => c.id === currentUser?.id || c.name === currentUser?.nome);
   const myEmitidos = metricsData[currentUserData?.name]?.emitidos || 0;
   const myAssinados = metricsData[currentUserData?.name]?.assinados || 0;
   const myProtocolados = metricsData[currentUserData?.name]?.protocolados || 0;
@@ -565,7 +565,7 @@ export default function Ranking() {
                 <>
                   <h2 className="text-white text-2xl font-black mb-1">Top 3 do Mês</h2>
                   <p className="text-white/70 text-sm">
-                    Você ainda não está no ranking. Conheça os líderes abaixo.
+                    Você não está no ranking. Veja os líderes abaixo.
                   </p>
                 </>
               )
